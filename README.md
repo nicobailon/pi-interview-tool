@@ -155,6 +155,70 @@ Theme notes:
 - `lightPath` / `darkPath`: optional CSS file paths (absolute or relative to cwd)
 - `toggleHotkey`: optional; when set, toggles light/dark and persists per browser profile
 
+## Theming
+
+The interview form supports light/dark themes with automatic OS detection and user override.
+
+### Built-in Themes
+
+| Theme | Description |
+|-------|-------------|
+| `default` | Monospace, IDE-inspired aesthetic |
+| `tufte` | Serif fonts (Cormorant Garamond), book-like feel |
+
+### Theme Modes
+
+- **`dark`** (default): Dark background, light text
+- **`light`**: Light background, dark text  
+- **`auto`**: Follows OS preference, user can toggle and override persists in localStorage
+
+### Custom Themes
+
+Create custom CSS files that override the default variables:
+
+```css
+:root {
+  --bg-body: #f8f8f8;
+  --bg-card: #ffffff;
+  --bg-elevated: #f0f0f0;
+  --bg-selected: #d0d0e0;
+  --bg-hover: #e8e8e8;
+  --fg: #1a1a1a;
+  --fg-muted: #6c6c6c;
+  --fg-dim: #8a8a8a;
+  --accent: #5f8787;
+  --accent-hover: #4a7272;
+  --accent-muted: rgba(95, 135, 135, 0.15);
+  --border: #5f87af;
+  --border-muted: #b0b0b0;
+  --border-focus: #8a8a9a;
+  --border-active: #9090a0;
+  --success: #87af87;
+  --warning: #d7af5f;
+  --error: #af5f5f;
+  --focus-ring: rgba(95, 135, 175, 0.2);
+}
+```
+
+Then reference in settings or params:
+
+```json
+{
+  "interview": {
+    "theme": {
+      "mode": "auto",
+      "lightPath": "~/my-themes/light.css",
+      "darkPath": "~/my-themes/dark.css",
+      "toggleHotkey": "mod+shift+l"
+    }
+  }
+}
+```
+
+### Toggle Hotkey
+
+When `toggleHotkey` is set (e.g., `"mod+shift+l"`), users can switch between light/dark modes. The preference persists in the browser's localStorage across sessions.
+
 ## Response Format
 
 ```typescript
