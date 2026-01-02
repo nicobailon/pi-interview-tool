@@ -14,6 +14,7 @@
   --success: #b5bd68;
   --warning: #f0c674;
   --error: #cc6666;
+  --focus-ring: rgba(138, 190, 183, 0.4);
 
   --font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
   --font-size-base: 13px;
@@ -440,11 +441,6 @@ textarea {
   color: var(--error);
 }
 
-.remove-btn:hover {
-  color: var(--fg);
-  border-color: var(--accent);
-}
-
 .form-footer {
   display: flex;
   justify-content: flex-end;
@@ -802,37 +798,6 @@ button {
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 11px;
-}
-
-.expired-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(135deg, rgba(255, 170, 50, 0.15), rgba(255, 140, 50, 0.1));
-  border-bottom: 1px solid rgba(255, 170, 50, 0.3);
-  color: var(--warning);
-  font-size: 13px;
-  padding: 10px 16px;
-  text-align: center;
-  z-index: 50;
-  backdrop-filter: blur(8px);
-  animation: slide-down 300ms ease-out;
-}
-
-.expired-banner.hidden {
-  display: none;
-}
-
-@keyframes slide-down {
-  from {
-    opacity: 0;
-    transform: translateY(-100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @media (max-width: 720px) {

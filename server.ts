@@ -279,7 +279,11 @@ export async function startInterviewServer(
 						return;
 					}
 					const question = questionCheck.question;
+					
 					if (question.type === "image") {
+						if (Array.isArray(item.value) && item.value.every((v) => typeof v === "string")) {
+							responses.push({ id: item.id, value: item.value });
+						}
 						continue;
 					}
 

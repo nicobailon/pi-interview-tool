@@ -963,6 +963,11 @@
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         populateForm(JSON.parse(saved));
+        questions.forEach((q) => {
+          if (q.type === "multi") {
+            updateDoneState(q.id);
+          }
+        });
       }
     } catch (_err) {
       // ignore storage errors
