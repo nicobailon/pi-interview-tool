@@ -202,11 +202,18 @@
     return `${hours}h ago`;
   }
 
+  function truncateText(text, maxLength) {
+    if (!text || text.length <= maxLength) return text;
+    const head = Math.ceil((maxLength - 3) * 0.6);
+    const tail = Math.floor((maxLength - 3) * 0.4);
+    return `${text.slice(0, head)}...${text.slice(-tail)}`;
+  }
+
   function formatSessionLabel(session) {
     const status = session.status === "active" ? "Active" : "Waiting";
     const branch = session.gitBranch ? ` (${session.gitBranch})` : "";
-    const project = session.cwd ? session.cwd + branch : "Unknown";
-    const title = session.title || "Interview";
+    const project = session.cwd ? truncateText(session.cwd + branch, 36) : "Unknown";
+    const title = truncateText(session.title || "Interview", 32);
     const timeAgo = formatRelativeTime(session.startedAt);
     return `${status}: ${title} — ${project} · ${timeAgo}`;
   }
@@ -238,7 +245,11 @@
       const option = document.createElement("option");
       option.value = session.url;
       if (session.id === sessionId) {
-        option.textContent = `Active (this tab): ${formatSessionLabel(session)}`;
+        const branch = session.gitBranch ? ` (${session.gitBranch})` : "";
+        const project = session.cwd ? truncateText(session.cwd + branch, 36) : "Unknown";
+        const title = truncateText(session.title || "Interview", 32);
+        const timeAgo = formatRelativeTime(session.startedAt);
+        option.textContent = `Active (this tab): ${title} — ${project} · ${timeAgo}`;
         option.disabled = true;
       } else {
         option.textContent = formatSessionLabel(session);

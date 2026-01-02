@@ -802,10 +802,13 @@ button {
   display: flex;
   gap: 8px;
   align-items: center;
+  width: 100%;
 }
 
 .queue-toast-select {
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
   background: var(--bg-card);
   color: var(--fg);
   border: 1px solid var(--border-muted);
@@ -813,6 +816,9 @@ button {
   padding: 6px 8px;
   font-family: var(--font-ui);
   font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 640px) {
