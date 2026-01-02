@@ -4,6 +4,7 @@
   --bg-elevated: #252220;
   --bg-selected: #2d2925;
   --bg-hover: #302b26;
+  --bg-active-tint: rgba(201, 183, 154, 0.1);
   --fg: #e7e2d9;
   --fg-muted: #a9a194;
   --fg-dim: #8d8476;

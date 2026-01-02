@@ -2,6 +2,10 @@
   const data = window.__INTERVIEW_DATA__ || {};
   const questions = Array.isArray(data.questions) ? data.questions : [];
   const sessionToken = data.sessionToken || "";
+  const sessionId = data.sessionId || "";
+  const cwd = data.cwd || "";
+  const gitBranch = data.gitBranch || "";
+  const startedAt = data.startedAt || Date.now();
   const timeout = typeof data.timeout === "number" ? data.timeout : 0;
 
   const titleEl = document.getElementById("form-title");
@@ -776,12 +780,21 @@
           } else if (option.type === 'radio') {
             option.checked = true;
             debounceSave();
-            nextQuestion();
+            if (option.value === '__other__') {
+              const otherInput = card.querySelector('.other-input');
+              if (otherInput) otherInput.focus();
+            } else {
+              nextQuestion();
+            }
           } else if (option.type === 'checkbox') {
             option.checked = !option.checked;
             debounceSave();
             const questionId = option.name;
             updateDoneState(questionId);
+            if (option.value === '__other__' && option.checked) {
+              const otherInput = card.querySelector('.other-input');
+              if (otherInput) otherInput.focus();
+            }
           }
         }
         return;
@@ -1666,6 +1679,20 @@
     
     setText(titleEl, data.title || "Interview");
     setText(descriptionEl, data.description || "");
+
+    const sessionProjectEl = document.getElementById("session-project");
+    const sessionIdEl = document.getElementById("session-id");
+    if (sessionProjectEl && cwd) {
+      const pathDisplay = cwd.length > 40 ? "..." + cwd.slice(-37) : cwd;
+      const branchSuffix = gitBranch ? ` (${gitBranch})` : "";
+      sessionProjectEl.textContent = pathDisplay + branchSuffix;
+    }
+    if (sessionIdEl && sessionId) {
+      sessionIdEl.textContent = sessionId.slice(0, 8);
+    }
+    const projectName = cwd.split("/").filter(Boolean).pop() || "interview";
+    const shortId = sessionId.slice(0, 8);
+    document.title = `${projectName}${gitBranch ? ` (${gitBranch})` : ""} | ${shortId}`;
 
     questions.forEach((question, index) => {
       containerEl.appendChild(createQuestionCard(question, index));

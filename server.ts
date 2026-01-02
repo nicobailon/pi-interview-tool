@@ -1,11 +1,34 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Question, QuestionsFile } from "./schema.js";
+
+function getGitBranch(cwd: string): string | null {
+	try {
+		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd,
+			encoding: "utf8",
+			timeout: 2000,
+			stdio: ["pipe", "pipe", "pipe"],
+		}).trim();
+		return branch || null;
+	} catch {
+		return null;
+	}
+}
+
+function normalizePath(path: string): string {
+	const home = homedir();
+	if (path.startsWith(home)) {
+		return "~" + path.slice(home.length);
+	}
+	return path;
+}
 
 export interface ResponseItem {
 	id: string;
@@ -17,6 +40,7 @@ export interface InterviewServerOptions {
 	questions: QuestionsFile;
 	sessionToken: string;
 	sessionId: string;
+	cwd: string;
 	timeout: number;
 	verbose?: boolean;
 	theme?: InterviewThemeConfig;
@@ -205,7 +229,7 @@ export async function startInterviewServer(
 	options: InterviewServerOptions,
 	callbacks: InterviewServerCallbacks
 ): Promise<InterviewServerHandle> {
-	const { questions, sessionToken, sessionId, timeout, verbose } = options;
+	const { questions, sessionToken, sessionId, cwd, timeout, verbose } = options;
 	const questionById = new Map<string, Question>();
 	for (const question of questions.questions) {
 		questionById.set(question.id, question);
@@ -248,11 +272,16 @@ export async function startInterviewServer(
 
 			if (method === "GET" && url.pathname === "/") {
 				if (!validateTokenQuery(url, sessionToken, res)) return;
+				const gitBranch = getGitBranch(cwd);
 				const inlineData = safeInlineJSON({
 					questions: questions.questions,
 					title: questions.title,
 					description: questions.description,
 					sessionToken,
+					sessionId,
+					cwd: normalizePath(cwd),
+					gitBranch,
+					startedAt: Date.now(),
 					timeout,
 					theme: {
 						mode: themeMode,

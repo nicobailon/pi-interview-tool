@@ -240,6 +240,7 @@ const factory: CustomToolFactory = (pi) => {
 						questions: questionsData,
 						sessionToken,
 						sessionId,
+						cwd: pi.cwd,
 						timeout: timeoutSeconds,
 						verbose,
 						theme: themeConfig,

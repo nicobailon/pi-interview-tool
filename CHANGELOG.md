@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-01-02
+
+### Added
+- "Other..." text input option for single/multi select questions
+  - Keyboard selection (Enter/Space) auto-focuses the text input
+  - Value restoration from localStorage
+- Session status bar at top of form
+  - Shows cwd path with `~` home directory normalization (cross-platform)
+  - Git branch detection via `git rev-parse`
+  - Short session ID for identification
+- Dynamic document title: `projectName (branch) | sessionId` for tab identification
+- `--bg-active-tint` CSS variable for theme-aware active question styling
+
+### Changed
+- Active question focus styling uses gradient background tint instead of border-only
+- Path normalization moved server-side using `os.homedir()` for cross-platform support
+
+### Fixed
+- "Other" option keyboard selection now focuses text input instead of advancing to next question
+- Light mode active question gradient visibility (increased tint opacity)
+
+---
+
 ## Unreleased
 
 ### Added

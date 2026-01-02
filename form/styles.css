@@ -4,6 +4,7 @@
   --bg-elevated: #252530;
   --bg-selected: #3a3a4a;
   --bg-hover: #2b2b37;
+  --bg-active-tint: rgba(138, 190, 183, 0.08);
   --fg: #e0e0e0;
   --fg-muted: #808080;
   --fg-dim: #666666;
@@ -58,6 +59,28 @@ body {
   overflow: hidden;
 }
 
+.session-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  margin: -16px -16px 16px -16px;
+  background: var(--bg-body);
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.session-project {
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.session-id {
+  font-family: var(--font-mono);
+  opacity: 0.6;
+}
+
 .interview-header h1 {
   margin: 0 0 4px;
   font-size: 20px;
@@ -87,7 +110,8 @@ body {
 }
 
 .question-card.active {
-  border-color: var(--border-active);
+  background: linear-gradient(to bottom, var(--bg-active-tint), transparent), var(--bg-elevated);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-muted));
 }
 
 .question-card.dragover {
@@ -488,8 +512,8 @@ textarea {
 }
 
 .form-footer.active {
-  border-color: var(--accent);
-  background: rgba(138, 190, 183, 0.03);
+  background: linear-gradient(to bottom, var(--bg-active-tint), transparent), var(--bg-card);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-muted));
 }
 
 .shortcuts-bar {
