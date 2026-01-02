@@ -90,7 +90,7 @@ const factory: CustomToolFactory = (pi) => {
 				);
 			}
 
-			if (ctx.hasQueuedMessages()) {
+			if (typeof ctx.hasQueuedMessages === "function" && ctx.hasQueuedMessages()) {
 				return {
 					content: [{ type: "text", text: "Interview skipped - user has queued input." }],
 					details: { status: "cancelled", url: "", responses: [] },
