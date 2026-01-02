@@ -359,6 +359,33 @@
     el.textContent = text || "";
   }
 
+  function isPrintableKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return false;
+    return event.key.length === 1;
+  }
+
+  function maybeStartOtherInput(event) {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement)) return false;
+    if ((active.type !== "radio" && active.type !== "checkbox") || active.value !== "__other__") return false;
+    if (!isPrintableKey(event)) return false;
+    const card = active.closest(".question-card");
+    const otherInput = card?.querySelector(".other-input");
+    if (!otherInput) return false;
+
+    event.preventDefault();
+    if (!active.checked) {
+      active.checked = true;
+      const question = questions.find((q) => q.id === active.name);
+      if (question?.type === "multi") updateDoneState(active.name);
+      debounceSave();
+    }
+    otherInput.focus();
+    otherInput.value += event.key;
+    otherInput.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
   const themeConfig = data.theme || {};
   const themeMode = themeConfig.mode || "dark";
   const themeToggleHotkey =
@@ -799,6 +826,14 @@
     });
   }
 
+  function ensureElementVisible(el) {
+    const rect = el.getBoundingClientRect();
+    const margin = 80;
+    if (rect.top < margin || rect.bottom > window.innerHeight - margin) {
+      el.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+    }
+  }
+
   function focusQuestion(index, fromDirection = 'next') {
     if (index < 0 || index >= nav.cards.length) return;
     
@@ -813,7 +848,7 @@
     nav.questionIndex = index;
     const card = nav.cards[index];
     card.classList.add('active');
-    card.scrollIntoView({ behavior: 'auto', block: 'center' });
+    ensureElementVisible(card);
     
     const options = getOptionsForCard(card);
     const dropzone = card.querySelector('.file-dropzone');
@@ -850,7 +885,7 @@
     nav.inSubmitArea = true;
     formFooter?.classList.add('active');
     submitBtn.focus();
-    formFooter?.scrollIntoView({ behavior: 'auto', block: 'center' });
+    if (formFooter) ensureElementVisible(formFooter);
   }
 
   function deactivateSubmitArea() {
@@ -881,6 +916,8 @@
       formEl.requestSubmit();
       return;
     }
+
+    if (maybeStartOtherInput(event)) return;
 
     if (nav.inSubmitArea) return;
     

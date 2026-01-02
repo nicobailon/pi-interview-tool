@@ -28,10 +28,13 @@
 - Path normalization moved server-side using `os.homedir()` for cross-platform support
 - Session registration uses upsert pattern (handles re-registration after prune)
 - Cancel endpoint accepts `reason` field: "timeout", "user", or "stale"
+- Queue toast position moved to top-right with compact layout
 
 ### Fixed
 - "Other" option keyboard selection now focuses text input instead of advancing to next question
+- "Other" option accepts typing immediately when focused via keyboard
 - Light mode active question gradient visibility (increased tint opacity)
+- Question focus scroll uses nearest positioning to avoid jarring jumps
 - Server-side timeout only starts when browser auto-opens (not for queued interviews)
 - `formatTimeAgo` handles negative timestamps (clock skew)
 - Race conditions prevented via `completed` flag on server
