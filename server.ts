@@ -336,8 +336,8 @@ export async function startInterviewServer(
 					try {
 						const filepath = await handleImageUpload(image, sessionId);
 						
+						const existing = responses.find((r) => r.id === image.id);
 						if (image.isAttachment) {
-							const existing = responses.find((r) => r.id === image.id);
 							if (existing) {
 								existing.attachments = existing.attachments || [];
 								existing.attachments.push(filepath);
@@ -345,7 +345,17 @@ export async function startInterviewServer(
 								responses.push({ id: image.id, value: "", attachments: [filepath] });
 							}
 						} else {
-							responses.push({ id: image.id, value: filepath });
+							if (existing) {
+								if (Array.isArray(existing.value)) {
+									existing.value.push(filepath);
+								} else if (existing.value === "") {
+									existing.value = filepath;
+								} else {
+									existing.value = [existing.value, filepath];
+								}
+							} else {
+								responses.push({ id: image.id, value: filepath });
+							}
 						}
 					} catch (err) {
 						const message = err instanceof Error ? err.message : "Image upload failed";
