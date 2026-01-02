@@ -9,12 +9,9 @@
       "recommended": "Svelte"
     },
     {
-      "id": "features",
-      "type": "multi",
-      "question": "Which features do you need?",
-      "context": "Select all that apply",
-      "options": ["Auth", "Database", "API routes", "File uploads", "Real-time"],
-      "recommended": ["Auth", "Database"]
+      "id": "screenshot",
+      "type": "image",
+      "question": "Attach a screenshot or mockup"
     },
     {
       "id": "notes",

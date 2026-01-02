@@ -800,6 +800,104 @@ button {
   font-size: 11px;
 }
 
+.attach-hint {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.attach-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+.attach-btn:hover,
+.attach-btn:focus {
+  opacity: 1;
+  color: var(--fg-muted);
+  outline: none;
+}
+
+.attach-btn.has-attachment {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.attach-inline {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-body);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+}
+
+.attach-inline.hidden {
+  display: none;
+}
+
+.attach-inline-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  border: 1px dashed var(--border-muted);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: border-color 150ms ease;
+}
+
+.attach-inline-drop:hover,
+.attach-inline-drop:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.attach-inline-drop.dragover {
+  border-color: var(--accent-bright);
+  background: rgba(138, 190, 183, 0.05);
+}
+
+.attach-inline-path {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+.attach-inline-path:focus {
+  border-color: var(--accent-bright);
+}
+
+.attach-inline-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.attach-inline-items:empty {
+  display: none;
+}
+
 @media (max-width: 720px) {
   body {
     padding: 12px;

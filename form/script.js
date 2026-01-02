@@ -27,6 +27,8 @@
 
   const imageState = new Map();
   const imagePathState = new Map();
+  const attachState = new Map();
+  const attachPathState = new Map();
   let storageKey = null;
   let saveTimer = null;
   let sessionExpired = false;
@@ -762,6 +764,104 @@
       card.appendChild(wrapper);
     }
 
+    if (question.type !== "image") {
+      attachPathState.set(question.id, []);
+      
+      const attachHint = document.createElement("div");
+      attachHint.className = "attach-hint";
+      
+      const attachBtn = document.createElement("button");
+      attachBtn.type = "button";
+      attachBtn.className = "attach-btn";
+      attachBtn.innerHTML = '<span>+</span> attach';
+      attachBtn.dataset.questionId = question.id;
+      
+      const attachInline = document.createElement("div");
+      attachInline.className = "attach-inline hidden";
+      attachInline.dataset.attachInlineFor = question.id;
+      
+      const attachFileInput = document.createElement("input");
+      attachFileInput.type = "file";
+      attachFileInput.accept = "image/png,image/jpeg,image/gif,image/webp";
+      attachFileInput.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;";
+      
+      const attachDrop = document.createElement("div");
+      attachDrop.className = "attach-inline-drop";
+      attachDrop.setAttribute("tabindex", "0");
+      attachDrop.textContent = "Drop image or click";
+      
+      const attachPath = document.createElement("input");
+      attachPath.type = "text";
+      attachPath.className = "attach-inline-path";
+      attachPath.placeholder = "Or paste path/URL and press Enter";
+      
+      const attachItems = document.createElement("div");
+      attachItems.className = "attach-inline-items";
+      attachItems.dataset.attachItemsFor = question.id;
+      
+      attachBtn.addEventListener("click", () => {
+        const isHidden = attachInline.classList.contains("hidden");
+        attachInline.classList.toggle("hidden", !isHidden);
+        if (isHidden) attachDrop.focus();
+      });
+      
+      attachFileInput.addEventListener("change", () => {
+        setTimeout(() => { filePickerOpen = false; }, 200);
+        handleAttachChange(question.id, attachFileInput, attachBtn);
+      });
+      
+      attachDrop.addEventListener("click", () => {
+        if (!filePickerOpen) {
+          filePickerOpen = true;
+          attachFileInput.click();
+        }
+      });
+      attachDrop.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (!filePickerOpen) {
+            filePickerOpen = true;
+            attachFileInput.click();
+          }
+        }
+      });
+      attachDrop.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        attachDrop.classList.add("dragover");
+      });
+      attachDrop.addEventListener("dragleave", () => {
+        attachDrop.classList.remove("dragover");
+      });
+      attachDrop.addEventListener("drop", (e) => {
+        e.preventDefault();
+        attachDrop.classList.remove("dragover");
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          const dt = new DataTransfer();
+          dt.items.add(files[0]);
+          attachFileInput.files = dt.files;
+          attachFileInput.dispatchEvent(new Event("change"));
+        }
+      });
+      
+      attachPath.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && attachPath.value.trim()) {
+          e.preventDefault();
+          addAttachPath(question.id, attachPath.value.trim(), attachBtn);
+          attachPath.value = "";
+        }
+      });
+      
+      attachInline.appendChild(attachFileInput);
+      attachInline.appendChild(attachDrop);
+      attachInline.appendChild(attachPath);
+      attachInline.appendChild(attachItems);
+      
+      attachHint.appendChild(attachBtn);
+      card.appendChild(attachHint);
+      card.appendChild(attachInline);
+    }
+
     const error = document.createElement("div");
     error.className = "field-error";
     error.dataset.errorFor = question.id;
@@ -816,6 +916,122 @@
     debounceSave();
   }
 
+  function updateAttachBtn(questionId, btn) {
+    const hasFile = attachState.has(questionId);
+    const paths = attachPathState.get(questionId) || [];
+    if (hasFile || paths.length > 0) {
+      btn.classList.add("has-attachment");
+    } else {
+      btn.classList.remove("has-attachment");
+    }
+  }
+
+  function renderAttachItems(questionId, btn) {
+    const container = document.querySelector(`[data-attach-items-for="${escapeSelector(questionId)}"]`);
+    if (!container) return;
+    container.innerHTML = "";
+    
+    const entry = attachState.get(questionId);
+    if (entry) {
+      const item = document.createElement("div");
+      item.className = "selected-item selected-image";
+      
+      const img = document.createElement("img");
+      const url = URL.createObjectURL(entry.file);
+      img.src = url;
+      img.onload = () => URL.revokeObjectURL(url);
+      
+      const name = document.createElement("span");
+      name.className = "selected-item-name";
+      name.textContent = entry.file.name;
+      
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "selected-item-remove";
+      removeBtn.textContent = "x";
+      removeBtn.addEventListener("click", () => {
+        attachState.delete(questionId);
+        renderAttachItems(questionId, btn);
+        updateAttachBtn(questionId, btn);
+        debounceSave();
+      });
+      
+      item.appendChild(img);
+      item.appendChild(name);
+      item.appendChild(removeBtn);
+      container.appendChild(item);
+    }
+    
+    const paths = attachPathState.get(questionId) || [];
+    paths.forEach((p) => {
+      const item = document.createElement("div");
+      item.className = "selected-item selected-path";
+      
+      const pathText = document.createElement("span");
+      pathText.className = "selected-item-path";
+      pathText.textContent = p;
+      
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "selected-item-remove";
+      removeBtn.textContent = "x";
+      removeBtn.addEventListener("click", () => {
+        const arr = attachPathState.get(questionId) || [];
+        const idx = arr.indexOf(p);
+        if (idx > -1) arr.splice(idx, 1);
+        renderAttachItems(questionId, btn);
+        updateAttachBtn(questionId, btn);
+        debounceSave();
+      });
+      
+      item.appendChild(pathText);
+      item.appendChild(removeBtn);
+      container.appendChild(item);
+    });
+    
+    updateAttachBtn(questionId, btn);
+  }
+
+  async function handleAttachChange(questionId, input, btn) {
+    const card = input.closest(".question-card");
+    const errorEl = card?.querySelector(".field-error");
+    
+    const file = input.files && input.files[0];
+    if (!file) {
+      attachState.delete(questionId);
+      renderAttachItems(questionId, btn);
+      return;
+    }
+
+    try {
+      const validation = await validateImage(file);
+      if (!validation.valid) {
+        if (errorEl) errorEl.textContent = validation.error;
+        input.value = "";
+        return;
+      }
+    } catch (err) {
+      if (errorEl) errorEl.textContent = "Failed to validate image.";
+      input.value = "";
+      return;
+    }
+
+    if (errorEl) errorEl.textContent = "";
+    attachState.set(questionId, { file });
+    renderAttachItems(questionId, btn);
+    debounceSave();
+  }
+
+  function addAttachPath(questionId, path, btn) {
+    const paths = attachPathState.get(questionId) || [];
+    if (!paths.includes(path)) {
+      paths.push(path);
+      attachPathState.set(questionId, paths);
+      renderAttachItems(questionId, btn);
+      debounceSave();
+    }
+  }
+
   function countImages(excludingId) {
     let count = 0;
     imageState.forEach((_value, key) => {
@@ -862,33 +1078,43 @@
     const responses = [];
 
     questions.forEach((question) => {
+      const resp = { id: question.id };
+      
       if (question.type === "single") {
         const selected = formEl.querySelector(
           `input[name="${escapeSelector(question.id)}"]:checked`
         );
-        responses.push({ id: question.id, value: selected ? selected.value : "" });
+        resp.value = selected ? selected.value : "";
       }
 
       if (question.type === "multi") {
         const selected = Array.from(
           formEl.querySelectorAll(`input[name="${escapeSelector(question.id)}"]:checked`)
         ).map((input) => input.value);
-        responses.push({ id: question.id, value: selected });
+        resp.value = selected;
       }
 
       if (question.type === "text") {
         const textarea = formEl.querySelector(
           `textarea[data-question-id="${escapeSelector(question.id)}"]`
         );
-        responses.push({ id: question.id, value: textarea ? textarea.value : "" });
+        resp.value = textarea ? textarea.value : "";
       }
 
       if (question.type === "image") {
         const paths = imagePathState.get(question.id) || [];
-        if (paths.length > 0) {
-          responses.push({ id: question.id, value: paths, type: "paths" });
+        resp.value = paths;
+        resp.type = "paths";
+      }
+      
+      if (question.type !== "image") {
+        const attachPaths = attachPathState.get(question.id) || [];
+        if (attachPaths.length > 0) {
+          resp.attachments = attachPaths;
         }
       }
+
+      responses.push(resp);
     });
 
     return responses;
@@ -1044,6 +1270,18 @@
         filename: file.name,
         mimeType: file.type,
         data,
+      });
+    }
+    
+    for (const [id, entry] of attachState.entries()) {
+      const file = entry.file;
+      const data = await readFileBase64(file);
+      images.push({
+        id,
+        filename: file.name,
+        mimeType: file.type,
+        data,
+        isAttachment: true,
       });
     }
 

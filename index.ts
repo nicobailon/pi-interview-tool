@@ -64,7 +64,11 @@ function formatResponses(responses: ResponseItem[]): string {
 	return responses
 		.map((resp) => {
 			const value = Array.isArray(resp.value) ? resp.value.join(", ") : resp.value;
-			return `- ${resp.id}: ${value}`;
+			let line = `- ${resp.id}: ${value}`;
+			if (resp.attachments && resp.attachments.length > 0) {
+				line += ` [attachments: ${resp.attachments.join(", ")}]`;
+			}
+			return line;
 		})
 		.join("\n");
 }

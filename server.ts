@@ -10,6 +10,7 @@ import type { Question, QuestionsFile } from "./schema.js";
 export interface ResponseItem {
 	id: string;
 	value: string | string[];
+	attachments?: string[];
 }
 
 export interface InterviewServerOptions {
@@ -258,8 +259,8 @@ export async function startInterviewServer(
 				if (!validateTokenBody(body, sessionToken, res)) return;
 
 				const payload = body as {
-					responses?: Array<{ id: string; value: string | string[] }>;
-					images?: Array<{ id: string; filename: string; mimeType: string; data: string }>;
+					responses?: Array<{ id: string; value: string | string[]; attachments?: string[] }>;
+					images?: Array<{ id: string; filename: string; mimeType: string; data: string; isAttachment?: boolean }>;
 				};
 
 				const responsesInput = Array.isArray(payload.responses) ? payload.responses : [];
@@ -280,14 +281,13 @@ export async function startInterviewServer(
 					}
 					const question = questionCheck.question;
 					
+					const resp: ResponseItem = { id: item.id, value: "" };
+					
 					if (question.type === "image") {
 						if (Array.isArray(item.value) && item.value.every((v) => typeof v === "string")) {
-							responses.push({ id: item.id, value: item.value });
+							resp.value = item.value;
 						}
-						continue;
-					}
-
-					if (question.type === "multi") {
+					} else if (question.type === "multi") {
 						if (!Array.isArray(item.value) || item.value.some((v) => typeof v !== "string")) {
 							sendJson(res, 400, {
 								ok: false,
@@ -296,6 +296,7 @@ export async function startInterviewServer(
 							});
 							return;
 						}
+						resp.value = item.value;
 					} else {
 						if (typeof item.value !== "string") {
 							sendJson(res, 400, {
@@ -305,9 +306,14 @@ export async function startInterviewServer(
 							});
 							return;
 						}
+						resp.value = item.value;
+					}
+					
+					if (Array.isArray(item.attachments) && item.attachments.every((a) => typeof a === "string")) {
+						resp.attachments = item.attachments;
 					}
 
-					responses.push({ id: item.id, value: item.value });
+					responses.push(resp);
 				}
 
 				for (const image of imagesInput) {
@@ -315,14 +321,6 @@ export async function startInterviewServer(
 					const questionCheck = ensureQuestionId(image.id, questionById);
 					if (questionCheck.ok === false) {
 						sendJson(res, 400, { ok: false, error: questionCheck.error, field: image.id });
-						return;
-					}
-					if (questionCheck.question.type !== "image") {
-						sendJson(res, 400, {
-							ok: false,
-							error: `Question ${image.id} does not accept images`,
-							field: image.id,
-						});
 						return;
 					}
 
@@ -337,7 +335,18 @@ export async function startInterviewServer(
 
 					try {
 						const filepath = await handleImageUpload(image, sessionId);
-						responses.push({ id: image.id, value: filepath });
+						
+						if (image.isAttachment) {
+							const existing = responses.find((r) => r.id === image.id);
+							if (existing) {
+								existing.attachments = existing.attachments || [];
+								existing.attachments.push(filepath);
+							} else {
+								responses.push({ id: image.id, value: "", attachments: [filepath] });
+							}
+						} else {
+							responses.push({ id: image.id, value: filepath });
+						}
 					} catch (err) {
 						const message = err instanceof Error ? err.message : "Image upload failed";
 						sendJson(res, 400, { ok: false, error: message, field: image.id });
