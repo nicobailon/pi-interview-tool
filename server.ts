@@ -33,7 +33,7 @@ export interface InterviewServerHandle {
 }
 
 const MAX_BODY_SIZE = 15 * 1024 * 1024;
-const MAX_IMAGES = 2;
+const MAX_IMAGES = 12;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 

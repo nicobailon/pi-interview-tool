@@ -22,7 +22,7 @@
 
   const MAX_SIZE = 5 * 1024 * 1024;
   const MAX_DIMENSION = 4096;
-  const MAX_IMAGES = 2;
+  const MAX_IMAGES = 12;
   const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
   const imageState = new Map();
