@@ -98,7 +98,7 @@ const factory: CustomToolFactory = (pi) => {
 			}
 
 			const settings = getSettings();
-			const timeoutSeconds = timeout ?? settings.timeout ?? 300;
+			const timeoutSeconds = timeout ?? settings.timeout ?? 600;
 			const questionsData = loadQuestions(questions, pi.cwd);
 
 			if (signal?.aborted) {

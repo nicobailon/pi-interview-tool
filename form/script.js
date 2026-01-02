@@ -456,8 +456,11 @@
       }
       
       if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
         const option = options[currentOptionIndex];
+        if (isPathInput(option)) {
+          return;
+        }
+        event.preventDefault();
         if (option) {
           if (isDoneItem(option)) {
             if (!option.classList.contains('disabled')) {
@@ -469,9 +472,6 @@
               const fileInput = card.querySelector('input[type="file"]');
               if (fileInput) fileInput.click();
             }
-          } else if (isPathInput(option)) {
-            currentOptionIndex = (currentOptionIndex + 1) % options.length;
-            highlightOption(card, currentOptionIndex);
           } else if (option.type === 'radio') {
             option.checked = true;
             debounceSave();
