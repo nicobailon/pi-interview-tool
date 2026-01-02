@@ -1,0 +1,33 @@
+{
+  "title": "Project Setup",
+  "description": "Help me understand your requirements before I create the implementation plan.",
+  "questions": [
+    {
+      "id": "framework",
+      "type": "single",
+      "question": "Which framework should we use?",
+      "options": ["React", "Vue", "Svelte", "Not sure - research for me"],
+      "recommended": "React",
+      "context": "React has the largest ecosystem and best TypeScript support."
+    },
+    {
+      "id": "features",
+      "type": "multi",
+      "question": "Which features do you need?",
+      "options": ["Authentication", "Database", "API routes", "File uploads"],
+      "recommended": ["Authentication", "Database"],
+      "context": "Select all that apply."
+    },
+    {
+      "id": "notes",
+      "type": "text",
+      "question": "Any additional requirements or constraints?"
+    },
+    {
+      "id": "mockup",
+      "type": "image",
+      "question": "Upload a design mockup (optional)",
+      "context": "PNG, JPG, GIF, or WebP. Max 5MB."
+    }
+  ]
+}
