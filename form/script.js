@@ -296,6 +296,8 @@
     return el && el.classList.contains('file-dropzone');
   }
 
+  
+
   function isOptionInput(el) {
     return el && (el.type === 'radio' || el.type === 'checkbox');
   }
@@ -399,6 +401,9 @@
     const isTextFocused = document.activeElement === textarea;
     
     if (event.key === 'Tab') {
+      const inAttachArea = document.activeElement?.closest('.attach-inline');
+      if (inAttachArea) return;
+      
       event.preventDefault();
       const options = getOptionsForCard(card);
       
@@ -427,6 +432,20 @@
     if (event.key === 'Enter' && isMeta) {
       event.preventDefault();
       formEl.requestSubmit();
+      return;
+    }
+    
+    if (event.key === 'a' && !isMeta && !event.shiftKey && !isTextFocused) {
+      event.preventDefault();
+      const attachBtn = card.querySelector('.attach-btn');
+      if (attachBtn) {
+        attachBtn.click();
+        const attachInline = card.querySelector('.attach-inline');
+        if (attachInline && !attachInline.classList.contains('hidden')) {
+          const attachDrop = attachInline.querySelector('.attach-inline-drop');
+          if (attachDrop) attachDrop.focus();
+        }
+      }
       return;
     }
     
@@ -824,6 +843,18 @@
             attachFileInput.click();
           }
         }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          if (e.shiftKey) {
+            attachBtn.focus();
+          } else {
+            attachPath.focus();
+          }
+        }
+        if (e.key === "Escape") {
+          attachBtn.click();
+          attachBtn.focus();
+        }
       });
       attachDrop.addEventListener("dragover", (e) => {
         e.preventDefault();
@@ -849,6 +880,29 @@
           e.preventDefault();
           addAttachPath(question.id, attachPath.value.trim(), attachBtn);
           attachPath.value = "";
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          if (e.shiftKey) {
+            attachDrop.focus();
+          } else {
+            attachBtn.click();
+            attachBtn.focus();
+          }
+        }
+        if (e.key === "Escape") {
+          attachBtn.click();
+          attachBtn.focus();
+        }
+        if (e.key === "ArrowRight" && attachPath.selectionStart === attachPath.value.length) {
+          e.preventDefault();
+          e.stopPropagation();
+          nextQuestion();
+        }
+        if (e.key === "ArrowLeft" && attachPath.selectionStart === 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          prevQuestion();
         }
       });
       

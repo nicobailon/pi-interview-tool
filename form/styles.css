@@ -823,7 +823,8 @@ button {
 }
 
 .attach-btn:hover,
-.attach-btn:focus {
+.attach-btn:focus,
+.attach-btn.focused {
   opacity: 1;
   color: var(--fg-muted);
   outline: none;
@@ -835,8 +836,8 @@ button {
 }
 
 .attach-inline {
-  margin-top: 8px;
-  padding: 8px;
+  margin-top: 10px;
+  padding: 12px;
   background: var(--bg-body);
   border: 1px solid var(--border-muted);
   border-radius: var(--radius);
@@ -860,7 +861,8 @@ button {
 }
 
 .attach-inline-drop:hover,
-.attach-inline-drop:focus {
+.attach-inline-drop:focus,
+.attach-inline-drop.focused {
   border-color: var(--accent);
   outline: none;
 }
@@ -872,8 +874,8 @@ button {
 
 .attach-inline-path {
   width: 100%;
-  margin-top: 6px;
-  padding: 6px 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg);
@@ -883,7 +885,8 @@ button {
   outline: none;
 }
 
-.attach-inline-path:focus {
+.attach-inline-path:focus,
+.attach-inline-path.focused {
   border-color: var(--accent-bright);
 }
 
