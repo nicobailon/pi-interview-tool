@@ -76,7 +76,7 @@ const factory: CustomToolFactory = (pi) => {
 		description: "Present an interactive form to gather user responses to questions.",
 		parameters: InterviewParams,
 
-		async execute(_toolCallId, params, _onUpdate, _ctx, signal) {
+		async execute(_toolCallId, params, _onUpdate, ctx, signal) {
 			const { questions, timeout, verbose } = params as {
 				questions: string;
 				timeout?: number;
@@ -88,6 +88,13 @@ const factory: CustomToolFactory = (pi) => {
 					"Interview tool requires interactive mode with browser support. " +
 						"Cannot run in headless/RPC/print mode."
 				);
+			}
+
+			if (ctx.hasQueuedMessages()) {
+				return {
+					content: [{ type: "text", text: "Interview skipped - user has queued input." }],
+					details: { status: "cancelled", url: "", responses: [] },
+				};
 			}
 
 			const settings = getSettings();
