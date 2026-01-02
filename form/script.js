@@ -60,10 +60,12 @@
   function startCountdownDisplay() {
     if (!countdownBadge || timeout <= 0) return;
     
+    const expandThreshold = 120;
     const urgentThreshold = 30;
     countdownEndTime = Date.now() + (timeout * 1000);
     
     countdownBadge.classList.remove("hidden");
+    countdownBadge.classList.add("minimal");
     
     if (tickLoopRunning) return;
     tickLoopRunning = true;
@@ -73,6 +75,10 @@
       const remaining = Math.max(0, Math.ceil((countdownEndTime - now) / 1000));
       
       updateCountdownBadge(remaining, timeout);
+      
+      if (remaining <= expandThreshold) {
+        countdownBadge.classList.remove("minimal");
+      }
       
       if (remaining <= urgentThreshold) {
         countdownBadge.classList.add("urgent");
@@ -93,6 +99,7 @@
   function refreshCountdown() {
     if (sessionExpired || timeout <= 0) return;
     countdownEndTime = Date.now() + (timeout * 1000);
+    countdownBadge?.classList.add("minimal");
     countdownBadge?.classList.remove("urgent");
     
     if (expirationTimeout) {
@@ -419,7 +426,11 @@
     if (event.key === 'Escape') {
       if (!expiredOverlay.classList.contains('hidden')) {
         if (countdownInterval) clearInterval(countdownInterval);
-        window.close();
+        fetch("/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: sessionToken }),
+        }).catch(() => {}).finally(() => window.close());
         return;
       }
       showSessionExpired();
@@ -1413,8 +1424,15 @@
       }
     });
     
-    closeTabBtn.addEventListener("click", () => {
+    closeTabBtn.addEventListener("click", async () => {
       if (countdownInterval) clearInterval(countdownInterval);
+      try {
+        await fetch("/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: sessionToken }),
+        });
+      } catch (_err) {}
       window.close();
     });
 

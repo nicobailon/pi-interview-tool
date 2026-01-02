@@ -5,21 +5,22 @@ A custom tool for pi-agent that opens a web-based form to gather user responses 
 ## Features
 
 - **Question Types**: Single-select, multi-select, text input, and image upload
+- **Per-Question Attachments**: Attach images to any question via `a` key
 - **Keyboard Navigation**: Full keyboard support with arrow keys, Tab, Enter
 - **Auto-save**: Responses saved to localStorage, restored on reload
-- **Session Timeout**: Configurable timeout with countdown badge, refreshes on user activity
-- **Image Support**: File upload (drag-and-drop) or paste paths/URLs as tags
-- **Responsive**: Mobile-friendly layout
-- **Dark Theme**: Aligned with pi-mono dark theme colors
+- **Session Timeout**: Configurable timeout with countdown badge, refreshes on activity
+- **Image Support**: Drag-drop, file picker, or paste paths/URLs
+- **Dark Theme**: IDE-inspired dark theme
 
 ## Usage
 
-```typescript
-import { interview } from './interview';
+The interview tool is invoked by pi-agent, not imported directly:
 
-const result = await interview({
+```javascript
+// Create a questions JSON file, then call the tool
+await interview({
   questions: '/path/to/questions.json',
-  timeout: 300,  // optional, seconds (default: 300)
+  timeout: 600,  // optional, seconds (default: 600)
   verbose: false // optional, debug logging
 });
 ```
@@ -36,15 +37,15 @@ const result = await interview({
       "type": "single",
       "question": "Which framework?",
       "options": ["React", "Vue", "Svelte"],
-      "recommended": ["React"]
+      "recommended": "React"
     },
     {
       "id": "features",
       "type": "multi",
       "question": "Which features?",
-      "description": "Select all that apply",
+      "context": "Select all that apply",
       "options": ["Auth", "Database", "API"],
-      "recommended": ["Database"]
+      "recommended": ["Auth", "Database"]
     },
     {
       "id": "notes",
@@ -54,76 +55,83 @@ const result = await interview({
     {
       "id": "mockup",
       "type": "image",
-      "question": "Upload a design mockup",
-      "description": "PNG, JPG, GIF, or WebP. Max 5MB."
+      "question": "Upload a design mockup"
     }
   ]
 }
 ```
 
+### Question Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `type` | string | `single`, `multi`, `text`, or `image` |
+| `question` | string | Question text |
+| `options` | string[] | Choices (required for single/multi) |
+| `recommended` | string or string[] | Highlighted option(s) with `*` indicator |
+| `context` | string | Help text shown below question |
+
 ## Keyboard Shortcuts
 
-### Form Navigation
 | Key | Action |
 |-----|--------|
-| `↑` `↓` | Navigate options within question |
+| `↑` `↓` | Navigate options |
 | `←` `→` | Navigate between questions |
 | `Tab` | Cycle through options |
-| `Enter` | Select option / advance |
-| `⌘/Ctrl+Enter` | Submit form |
-| `Esc` | Show exit overlay |
-
-### Session Overlay
-| Key | Action |
-|-----|--------|
-| `Tab` | Switch between Stay/Close |
-| `Enter` | Confirm focused button |
-| `Esc` | Close immediately |
+| `Enter` / `Space` | Select option |
+| `A` | Toggle attach image panel |
+| `⌘+Enter` | Submit form |
+| `Esc` | Show exit overlay / close attach panel |
 
 ## Configuration
 
-Settings can be configured in `~/.pi/agent/settings.json`:
+Settings in `~/.pi/agent/settings.json`:
 
 ```json
 {
   "interview": {
-    "timeout": 300
+    "timeout": 600
   }
 }
 ```
 
-Timeout precedence: params > settings > default (300s)
+Precedence: params > settings > default (600s)
+
+## Response Format
+
+```typescript
+interface Response {
+  id: string;
+  value: string | string[];
+  attachments?: string[];  // paths/URLs attached via 'a' key
+}
+```
+
+Example:
+```
+- framework: React [attachments: /path/to/diagram.png]
+- features: Auth, Database
+- notes: Need SSO support
+- mockup: /tmp/uploaded-image.png
+```
 
 ## File Structure
 
 ```
 interview/
-├── index.ts          # Tool definition and entry point
-├── server.ts         # HTTP server for form
-├── schema.ts         # Zod schemas for validation
-├── form/
-│   ├── index.html    # Form template
-│   ├── styles.css    # Dark theme styles
-│   └── script.js     # Form logic and keyboard handling
-├── example-questions.json
-└── README.md
+├── index.ts       # Tool entry point
+├── server.ts      # HTTP server
+├── schema.ts      # TypeBox validation
+└── form/
+    ├── index.html
+    ├── styles.css
+    └── script.js
 ```
 
-## Response Format
+## Limits
 
-The tool returns responses as an array:
-
-```typescript
-{
-  status: 'success' | 'cancelled' | 'timeout',
-  responses: [
-    { id: 'framework', value: 'React' },
-    { id: 'features', value: ['Auth', 'Database'] },
-    { id: 'notes', value: 'Some text...' },
-    { id: 'mockup', value: ['path/to/image.png'], type: 'paths' }
-  ],
-  images: [
-    { id: 'mockup', filename: 'upload.png', data: 'base64...' }
-  ]
-}
-```
+- Max 12 images total per submission
+- Max 5MB per image
+- Max 4096x4096 pixels per image
+- Allowed types: PNG, JPG, GIF, WebP
