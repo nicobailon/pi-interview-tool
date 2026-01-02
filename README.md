@@ -2,7 +2,7 @@
 
 A custom tool for pi-agent that opens a web-based form to gather user responses to clarification questions.
 
-<video src="https://github.com/nicobailon/pi-interview-tool/raw/main/interview-tool-demo.mp4" controls width="100%"></video>
+https://github.com/user-attachments/assets/ca364bc0-7006-44b9-8871-1724c618d176
 
 ## Installation
 
