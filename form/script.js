@@ -487,6 +487,9 @@
         if (isPathInput(document.activeElement)) {
           return;
         }
+        if (document.activeElement?.closest('.attach-inline')) {
+          return;
+        }
         event.preventDefault();
         const option = options[currentOptionIndex];
         if (option) {
