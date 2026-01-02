@@ -21,7 +21,7 @@
   const stayBtn = document.getElementById("stay-btn");
   const expiredBanner = document.getElementById("expired-banner");
 
-  const MAX_SIZE = 10 * 1024 * 1024;
+  const MAX_SIZE = 5 * 1024 * 1024;
   const MAX_DIMENSION = 4096;
   const MAX_IMAGES = 2;
   const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -670,7 +670,7 @@
       dropzone.innerHTML = `
         <span class="file-dropzone-icon">+</span>
         <span class="file-dropzone-text">Click to upload</span>
-        <span class="file-dropzone-hint">PNG, JPG, GIF, WebP (max 10MB)</span>
+        <span class="file-dropzone-hint">PNG, JPG, GIF, WebP (max 5MB)</span>
       `;
       
       const pathInput = document.createElement("input");
@@ -838,16 +838,12 @@
       return;
     }
 
-    let warning = null;
     try {
       const validation = await validateImage(file);
       if (!validation.valid) {
-        if (validation.error.includes("file type")) {
-          setFieldError(id, validation.error);
-          input.value = "";
-          return;
-        }
-        warning = validation.error;
+        setFieldError(id, validation.error);
+        input.value = "";
+        return;
       }
     } catch (err) {
       setFieldError(id, "Failed to validate image.");
@@ -1085,26 +1081,6 @@
       } else {
         showGlobalError("Failed to submit responses.");
         submitBtn.disabled = false;
-      }
-    }
-  }
-
-  async function cancelForm() {
-    clearGlobalError();
-    clearFieldErrors();
-
-    try {
-      await fetch("/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: sessionToken }),
-      });
-      window.close();
-    } catch (err) {
-      if (isNetworkError(err)) {
-        showSessionExpired();
-      } else {
-        window.close();
       }
     }
   }
