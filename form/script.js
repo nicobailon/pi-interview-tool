@@ -19,7 +19,6 @@
   const countdownRingProgress = countdownBadge?.querySelector(".countdown-ring-progress");
   const closeCountdown = document.getElementById("close-countdown");
   const stayBtn = document.getElementById("stay-btn");
-  const expiredBanner = document.getElementById("expired-banner");
 
   const MAX_SIZE = 5 * 1024 * 1024;
   const MAX_DIMENSION = 4096;
@@ -235,8 +234,6 @@
     });
   }
 
-  
-
   function clearGlobalError() {
     if (!errorContainer) return;
     errorContainer.textContent = "";
@@ -289,8 +286,6 @@
   function isDropzone(el) {
     return el && el.classList.contains('file-dropzone');
   }
-
-  
 
   function isOptionInput(el) {
     return el && (el.type === 'radio' || el.type === 'checkbox');
@@ -790,12 +785,6 @@
       return { valid: false, error: `Image exceeds ${MAX_DIMENSION}x${MAX_DIMENSION} limit.` };
     }
     return { valid: true };
-  }
-
-  function formatFileSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
   function updateImagePreview(id) {
