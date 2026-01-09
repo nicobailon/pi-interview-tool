@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { Text } from "@mariozechner/pi-tui";
+import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -78,7 +79,7 @@ const InterviewParams = Type.Object({
 	theme: Type.Optional(
 		Type.Object(
 			{
-				mode: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("light"), Type.Literal("dark")])),
+				mode: Type.Optional(StringEnum(["auto", "light", "dark"])),
 				name: Type.Optional(Type.String()),
 				lightPath: Type.Optional(Type.String()),
 				darkPath: Type.Optional(Type.String()),
