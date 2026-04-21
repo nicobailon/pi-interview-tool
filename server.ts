@@ -6,7 +6,7 @@ import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, renameSyn
 import { mkdir, writeFile, copyFile } from "node:fs/promises";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { Question, QuestionsFile, MediaBlock } from "./schema.js";
+import { getOptionLabel, type Question, type QuestionsFile, type MediaBlock, type OptionValue } from "./schema.js";
 
 function getGitBranch(cwd: string): string | null {
 	try {
@@ -178,10 +178,43 @@ function saveToRecovery(
 	return filePath;
 }
 
+export interface ChoiceResponseValue {
+	option: string;
+	note?: string;
+}
+
+export type ResponseValue = string | string[] | ChoiceResponseValue | ChoiceResponseValue[];
+
 export interface ResponseItem {
 	id: string;
-	value: string | string[];
+	value: ResponseValue;
 	attachments?: string[];
+}
+
+export interface SavedOptionInsight {
+	id: string;
+	questionId: string;
+	optionKey: string;
+	optionText: string;
+	prompt: string;
+	summary: string;
+	bullets?: string[];
+	suggestedText?: string;
+	modelUsed?: string | null;
+	createdAt?: string;
+}
+
+export interface AskModelOption {
+	value: string;
+	provider: string;
+	label: string;
+}
+
+export interface OptionInsightResult {
+	summary: string;
+	bullets?: string[];
+	suggestedText?: string;
+	modelUsed?: string | null;
 }
 
 export interface InterviewServerOptions {
@@ -196,7 +229,11 @@ export interface InterviewServerOptions {
 	snapshotDir?: string;
 	autoSaveOnSubmit?: boolean;
 	savedAnswers?: ResponseItem[];
+	savedOptionInsights?: SavedOptionInsight[];
+	optionKeysByQuestion?: Record<string, string[]>;
 	canGenerate?: boolean;
+	askModels?: AskModelOption[];
+	defaultAskModel?: string | null;
 }
 
 export interface InterviewServerCallbacks {
@@ -207,7 +244,14 @@ export interface InterviewServerCallbacks {
 		existingOptions: string[],
 		signal: AbortSignal,
 		mode: "add" | "review",
-	) => Promise<{ options: string[]; question?: string }>;
+	) => Promise<{ options: OptionValue[]; question?: string }>;
+	onOptionInsight?: (
+		questionId: string,
+		option: OptionValue,
+		prompt: string,
+		modelOverride: string | null,
+		signal: AbortSignal,
+	) => Promise<OptionInsightResult>;
 }
 
 export interface InterviewServerHandle {
@@ -387,11 +431,12 @@ function ensureQuestionId(
 	return { ok: true, question };
 }
 
-function syncRecommendations(question: Question, options: string[]): void {
+function syncRecommendations(question: Question, options: OptionValue[]): void {
+	const optionLabels = options.map((option) => getOptionLabel(option));
 	if (!question.recommended) return;
 
 	if (question.type === "single") {
-		if (typeof question.recommended === "string" && options.includes(question.recommended)) {
+		if (typeof question.recommended === "string" && optionLabels.includes(question.recommended)) {
 			return;
 		}
 		delete question.recommended;
@@ -407,13 +452,253 @@ function syncRecommendations(question: Question, options: string[]): void {
 
 	const nextRecommended = (Array.isArray(question.recommended)
 		? question.recommended
-		: [question.recommended]).filter((option) => options.includes(option));
+		: [question.recommended]).filter((option) => optionLabels.includes(option));
 	if (nextRecommended.length === 0) {
 		delete question.recommended;
 		delete question.conviction;
 		return;
 	}
 	question.recommended = nextRecommended;
+}
+
+function makeOptionKey(): string {
+	return `opt-${randomUUID()}`;
+}
+
+function buildOptionKeysByQuestion(
+	questionsList: Question[],
+	initial: Record<string, string[]> | undefined,
+): Record<string, string[]> {
+	const next: Record<string, string[]> = {};
+	for (const question of questionsList) {
+		if (question.type !== "single" && question.type !== "multi") continue;
+		if (!question.options) continue;
+		const existing = initial?.[question.id];
+		if (Array.isArray(existing) && existing.length === question.options.length && existing.every((key) => typeof key === "string" && key.trim().length > 0)) {
+			next[question.id] = [...existing];
+			continue;
+		}
+		next[question.id] = question.options.map(() => makeOptionKey());
+	}
+	return next;
+}
+
+function getOptionIndexByKey(
+	question: Question,
+	optionKeysByQuestion: Record<string, string[]>,
+	optionKey: string,
+): number {
+	if ((question.type !== "single" && question.type !== "multi") || !question.options) {
+		return -1;
+	}
+	const keys = optionKeysByQuestion[question.id] ?? [];
+	return keys.indexOf(optionKey);
+}
+
+function setOptionLabel(option: OptionValue, label: string): OptionValue {
+	return typeof option === "string" ? label : { ...option, label };
+}
+
+function isChoiceResponseValue(value: unknown): value is ChoiceResponseValue {
+	return !!value && typeof value === "object" && !Array.isArray(value) && typeof (value as ChoiceResponseValue).option === "string";
+}
+
+function normalizeChoiceResponseValue(value: unknown): ChoiceResponseValue | null {
+	if (!isChoiceResponseValue(value)) {
+		return null;
+	}
+	const option = value.option.trim();
+	if (!option) {
+		return null;
+	}
+	const note = typeof value.note === "string" ? value.note.trim() : "";
+	return note ? { option, note } : { option };
+}
+
+function cloneResponseValue(value: ResponseValue): ResponseValue {
+	if (Array.isArray(value)) {
+		return value.map((item) => isChoiceResponseValue(item)
+			? { ...item }
+			: item);
+	}
+	if (isChoiceResponseValue(value)) {
+		return { ...value };
+	}
+	return value;
+}
+
+function normalizeResponseItem(
+	question: Question,
+	item: { id?: unknown; value?: unknown; attachments?: unknown },
+): { ok: true; response: ResponseItem } | { ok: false; error: string } {
+	const response: ResponseItem = { id: question.id, value: "" };
+
+	if (question.type === "image") {
+		if (Array.isArray(item.value) && item.value.every((value) => typeof value === "string")) {
+			response.value = item.value;
+		}
+	} else if (question.type === "single") {
+		if (item.value === "") {
+			response.value = "";
+		} else {
+			const value = normalizeChoiceResponseValue(item.value);
+			if (!value) {
+				return { ok: false, error: `Invalid response value for ${question.id}` };
+			}
+			response.value = value;
+		}
+	} else if (question.type === "multi") {
+		if (!Array.isArray(item.value)) {
+			return { ok: false, error: `Invalid response value for ${question.id}` };
+		}
+		const values: ChoiceResponseValue[] = [];
+		for (const value of item.value) {
+			const normalized = normalizeChoiceResponseValue(value);
+			if (!normalized) {
+				return { ok: false, error: `Invalid response value for ${question.id}` };
+			}
+			values.push(normalized);
+		}
+		response.value = values;
+	} else {
+		if (typeof item.value !== "string") {
+			return { ok: false, error: `Invalid response value for ${question.id}` };
+		}
+		response.value = item.value;
+	}
+
+	if (Array.isArray(item.attachments) && item.attachments.every((attachment) => typeof attachment === "string")) {
+		response.attachments = item.attachments;
+	}
+
+	return { ok: true, response };
+}
+
+function normalizeResponseItems(
+	responsesInput: unknown[],
+	questionById: Map<string, Question>,
+): { ok: true; responses: ResponseItem[] } | { ok: false; field?: string; error: string } {
+	const responses: ResponseItem[] = [];
+	for (const item of responsesInput) {
+		if (!item || typeof item !== "object" || typeof (item as { id?: unknown }).id !== "string") continue;
+		const typedItem = item as { id: string; value?: unknown; attachments?: unknown };
+		const questionCheck = ensureQuestionId(typedItem.id, questionById);
+		if (questionCheck.ok === false) {
+			return { ok: false, error: questionCheck.error, field: typedItem.id };
+		}
+		const normalized = normalizeResponseItem(questionCheck.question, typedItem);
+		if (normalized.ok === false) {
+			return { ok: false, error: normalized.error, field: typedItem.id };
+		}
+		responses.push(normalized.response);
+	}
+	return { ok: true, responses };
+}
+
+function normalizeGeneratedOptionValues(options: OptionValue[]): OptionValue[] {
+	const uniqueOptions: OptionValue[] = [];
+	const indexByLabel = new Map<string, number>();
+	for (const option of options) {
+		const label = getOptionLabel(option).trim();
+		if (!label) continue;
+		const normalizedOption = setOptionLabel(option, label);
+		const labelKey = label.toLowerCase();
+		const existingIndex = indexByLabel.get(labelKey);
+		if (existingIndex === undefined) {
+			indexByLabel.set(labelKey, uniqueOptions.length);
+			uniqueOptions.push(normalizedOption);
+			continue;
+		}
+		if (typeof uniqueOptions[existingIndex] === "string" && typeof normalizedOption !== "string") {
+			uniqueOptions[existingIndex] = normalizedOption;
+		}
+	}
+	return uniqueOptions;
+}
+
+function reconcileOptionKeysByLabel(
+	previousOptions: OptionValue[],
+	previousKeys: string[],
+	nextOptions: OptionValue[],
+): string[] {
+	const availableKeysByLabel = new Map<string, string[]>();
+	for (let index = 0; index < previousOptions.length; index++) {
+		const key = previousKeys[index];
+		if (!key) continue;
+		const label = getOptionLabel(previousOptions[index]).trim();
+		const existing = availableKeysByLabel.get(label);
+		if (existing) {
+			existing.push(key);
+			continue;
+		}
+		availableKeysByLabel.set(label, [key]);
+	}
+
+	return nextOptions.map((option) => {
+		const matchingKeys = availableKeysByLabel.get(getOptionLabel(option).trim());
+		if (!matchingKeys || matchingKeys.length === 0) {
+			return makeOptionKey();
+		}
+		return matchingKeys.shift() ?? makeOptionKey();
+	});
+}
+
+function normalizeSavedOptionInsights(input: unknown): SavedOptionInsight[] {
+	if (!Array.isArray(input)) return [];
+	const normalized: SavedOptionInsight[] = [];
+	for (const item of input) {
+		if (!item || typeof item !== "object") continue;
+		const raw = item as Record<string, unknown>;
+		if (
+			typeof raw.id !== "string" ||
+			typeof raw.questionId !== "string" ||
+			typeof raw.optionKey !== "string" ||
+			typeof raw.optionText !== "string" ||
+			typeof raw.prompt !== "string" ||
+			typeof raw.summary !== "string"
+		) {
+			continue;
+		}
+		const bullets = Array.isArray(raw.bullets)
+			? raw.bullets.filter((bullet): bullet is string => typeof bullet === "string" && bullet.trim().length > 0)
+			: undefined;
+		normalized.push({
+			id: raw.id,
+			questionId: raw.questionId,
+			optionKey: raw.optionKey,
+			optionText: raw.optionText,
+			prompt: raw.prompt,
+			summary: raw.summary,
+			bullets: bullets && bullets.length > 0 ? bullets : undefined,
+			suggestedText: typeof raw.suggestedText === "string" ? raw.suggestedText : undefined,
+			modelUsed: typeof raw.modelUsed === "string" ? raw.modelUsed : raw.modelUsed === null ? null : undefined,
+			createdAt: typeof raw.createdAt === "string" ? raw.createdAt : undefined,
+		});
+	}
+	return normalized;
+}
+
+function renderSavedOptionInsightsHtml(insights: SavedOptionInsight[]): string {
+	if (insights.length === 0) return "";
+	return `<div class="saved-option-insights">${insights.map((insight) => {
+		const bulletsHtml = insight.bullets && insight.bullets.length > 0
+			? `<ul>${insight.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul>`
+			: "";
+		const suggestionHtml = insight.suggestedText
+			? `<div class="saved-option-insight-suggestion"><span>Suggested rewrite</span><code>${escapeHtml(insight.suggestedText)}</code></div>`
+			: "";
+		const metaParts = [
+			insight.optionText ? `Option: ${escapeHtml(insight.optionText)}` : "",
+			insight.modelUsed ? `Model: ${escapeHtml(insight.modelUsed)}` : "",
+		].filter(Boolean);
+		return `<article class="saved-option-insight">
+			<div class="saved-option-insight-prompt">${escapeHtml(insight.prompt)}</div>
+			${metaParts.length > 0 ? `<div class="saved-option-insight-meta">${metaParts.join(" · ")}</div>` : ""}
+			<p>${escapeHtml(insight.summary)}</p>
+			${bulletsHtml}
+			${suggestionHtml}
+		</article>`;
+	}).join("")}</div>`;
 }
 
 // HTML generation for saved interviews
@@ -645,6 +930,13 @@ function savedAnswerItemHtml(text: string, q: Question): string {
 	return escapeHtml(text) + indicator;
 }
 
+function savedChoiceAnswerHtml(value: ChoiceResponseValue, question: Question): string {
+	const noteHtml = value.note
+		? `<div class="saved-answer-note">${escapeHtml(value.note)}</div>`
+		: "";
+	return `<div class="saved-answer-choice">${savedAnswerItemHtml(value.option, question)}${noteHtml}</div>`;
+}
+
 function weightClasses(q: Question): string {
 	const classes = ["saved-question"];
 	if (q.type === "info") classes.push("info-panel");
@@ -683,7 +975,11 @@ async function copyMediaImages(questionsList: Question[], imagesDir: string, cwd
 	return rewritten;
 }
 
-function renderQuestionsHtml(questionsList: Question[], answers: ResponseItem[]): string {
+function renderQuestionsHtml(
+	questionsList: Question[],
+	answers: ResponseItem[],
+	optionInsights: SavedOptionInsight[],
+): string {
 	const answerMap = new Map(answers.map((a) => [a.id, a]));
 	let questionNum = 0;
 	return questionsList
@@ -692,6 +988,9 @@ function renderQuestionsHtml(questionsList: Question[], answers: ResponseItem[])
 			if (showNumber) questionNum++;
 			const numPrefix = showNumber ? `${questionNum}. ` : "";
 			const mediaHtml = renderMediaListHtml(q.media);
+			const optionInsightsHtml = renderSavedOptionInsightsHtml(
+				optionInsights.filter((insight) => insight.questionId === q.id),
+			);
 
 			if (q.type === "info") {
 				const contentHtml = renderContentBlockHtml(q.content);
@@ -701,6 +1000,7 @@ function renderQuestionsHtml(questionsList: Question[], answers: ResponseItem[])
         ${q.context ? `<p class="question-context">${escapeHtml(q.context)}</p>` : ""}
         ${contentHtml}
         ${mediaHtml}
+        ${optionInsightsHtml}
       </div>
     `;
 			}
@@ -718,10 +1018,17 @@ function renderQuestionsHtml(questionsList: Question[], answers: ResponseItem[])
 					.map((p) => `<img src="${escapeHtml(p)}" alt="uploaded image">`)
 					.join("")}</div>`;
 			} else if (q.type === "multi") {
-				const items = Array.isArray(value) ? value : [value];
+				const items = Array.isArray(value) ? value.filter(isChoiceResponseValue) : [];
 				answerHtml = `<div class="saved-answer"><ul>${items
-					.map((v) => `<li>${savedAnswerItemHtml(String(v), q)}</li>`)
+					.map((item) => `<li>${savedChoiceAnswerHtml(item, q)}</li>`)
 					.join("")}</ul></div>`;
+				if (items.length === 0) {
+					answerHtml = '<div class="saved-answer empty">(no answer)</div>';
+				}
+			} else if (q.type === "single") {
+				answerHtml = isChoiceResponseValue(value)
+					? `<div class="saved-answer">${savedChoiceAnswerHtml(value, q)}</div>`
+					: '<div class="saved-answer empty">(no answer)</div>';
 			} else {
 				answerHtml = `<div class="saved-answer">${savedAnswerItemHtml(String(value), q)}</div>`;
 			}
@@ -745,6 +1052,7 @@ function renderQuestionsHtml(questionsList: Question[], answers: ResponseItem[])
         ${contextHtml}
         ${contentHtml}
         ${mediaHtml}
+        ${optionInsightsHtml}
         ${answerHtml}
         ${attachHtml}
       </div>
@@ -818,6 +1126,55 @@ const SAVED_VIEW_STYLES = `
   border-radius: var(--radius);
   white-space: pre-wrap;
 }
+.saved-option-insights {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+.saved-option-insight {
+  border: 1px solid var(--border-muted);
+  border-radius: 12px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--bg-body) 82%, transparent);
+}
+.saved-option-insight-prompt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.saved-option-insight-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+.saved-option-insight p {
+  margin: 0;
+}
+.saved-option-insight ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.saved-option-insight-suggestion {
+  margin-top: 10px;
+  display: grid;
+  gap: 4px;
+}
+.saved-option-insight-suggestion span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+.saved-option-insight-suggestion code {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-body);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .saved-answer.empty {
   color: var(--fg-dim);
   font-style: italic;
@@ -825,6 +1182,14 @@ const SAVED_VIEW_STYLES = `
 .saved-answer ul {
   margin: 0;
   padding-left: 20px;
+}
+.saved-answer-choice {
+  display: grid;
+  gap: 4px;
+}
+.saved-answer-note {
+  color: var(--fg-muted);
+  font-size: 12px;
 }
 .saved-images, .saved-attachments {
   margin-top: 12px;
@@ -869,11 +1234,13 @@ const SAVED_VIEW_STYLES = `
 function generateSavedHtml(options: {
 	questions: QuestionsFile;
 	answers: ResponseItem[];
+	optionInsights: SavedOptionInsight[];
+	optionKeysByQuestion: Record<string, string[]>;
 	meta: SavedInterviewMeta;
 	baseStyles: string;
 	themeCss: string;
 }): string {
-	const { questions: questionsData, answers, meta, baseStyles, themeCss } = options;
+	const { questions: questionsData, answers, optionInsights, optionKeysByQuestion, meta, baseStyles, themeCss } = options;
 	const title = questionsData.title || "Interview";
 
 	// Build the data object for embedding
@@ -882,13 +1249,15 @@ function generateSavedHtml(options: {
 		description: questionsData.description,
 		questions: questionsData.questions,
 		savedAnswers: answers,
+		savedOptionInsights: optionInsights,
+		optionKeysByQuestion,
 		savedAt: meta.savedAt,
 		wasSubmitted: meta.wasSubmitted,
 		savedFrom: meta.savedFrom,
 	};
 
 	const embeddedJson = safeInlineJSON(dataForEmbedding);
-	const questionsHtml = renderQuestionsHtml(questionsData.questions, answers);
+	const questionsHtml = renderQuestionsHtml(questionsData.questions, answers, optionInsights);
 	const savedDate = new Date(meta.savedAt).toLocaleString();
 	const statusClass = meta.wasSubmitted ? "submitted" : "draft";
 	const statusText = meta.wasSubmitted ? "Submitted" : "Draft";
@@ -936,6 +1305,8 @@ export async function startInterviewServer(
 	for (const question of questions.questions) {
 		questionById.set(question.id, question);
 	}
+	const optionKeysByQuestion = buildOptionKeysByQuestion(questions.questions, options.optionKeysByQuestion);
+	const initialSavedOptionInsights = normalizeSavedOptionInsights(options.savedOptionInsights);
 
 	function getMediaList(q: Question): MediaBlock[] {
 		if (!q.media) return [];
@@ -1065,8 +1436,12 @@ export async function startInterviewServer(
 						toggleHotkey: themeConfig.toggleHotkey,
 					},
 					savedAnswers: options.savedAnswers,
+					savedOptionInsights: initialSavedOptionInsights,
+					optionKeysByQuestion,
 					autoSaveOnSubmit: options.autoSaveOnSubmit ?? true,
 					canGenerate: options.canGenerate ?? false,
+					askModels: options.askModels ?? [],
+					defaultAskModel: options.defaultAskModel ?? null,
 				});
 				const html = TEMPLATE
 					.replace("<!-- __CDN_SCRIPTS__ -->", cdnScripts)
@@ -1228,7 +1603,7 @@ export async function startInterviewServer(
 				}
 
 				const payload = body as {
-					responses?: Array<{ id: string; value: string | string[]; attachments?: string[] }>;
+					responses?: unknown[];
 					images?: Array<{ id: string; filename: string; mimeType: string; data: string; isAttachment?: boolean }>;
 				};
 
@@ -1240,50 +1615,16 @@ export async function startInterviewServer(
 					return;
 				}
 
-				const responses: ResponseItem[] = [];
-				for (const item of responsesInput) {
-					if (!item || typeof item.id !== "string") continue;
-					const questionCheck = ensureQuestionId(item.id, questionById);
-					if (questionCheck.ok === false) {
-						sendJson(res, 400, { ok: false, error: questionCheck.error, field: item.id });
-						return;
-					}
-					const question = questionCheck.question;
-					
-					const resp: ResponseItem = { id: item.id, value: "" };
-					
-					if (question.type === "image") {
-						if (Array.isArray(item.value) && item.value.every((v) => typeof v === "string")) {
-							resp.value = item.value;
-						}
-					} else if (question.type === "multi") {
-						if (!Array.isArray(item.value) || item.value.some((v) => typeof v !== "string")) {
-							sendJson(res, 400, {
-								ok: false,
-								error: `Invalid response value for ${item.id}`,
-								field: item.id,
-							});
-							return;
-						}
-						resp.value = item.value;
-					} else {
-						if (typeof item.value !== "string") {
-							sendJson(res, 400, {
-								ok: false,
-								error: `Invalid response value for ${item.id}`,
-								field: item.id,
-							});
-							return;
-						}
-						resp.value = item.value;
-					}
-					
-					if (Array.isArray(item.attachments) && item.attachments.every((a) => typeof a === "string")) {
-						resp.attachments = item.attachments;
-					}
-
-					responses.push(resp);
+				const normalizedResponses = normalizeResponseItems(responsesInput, questionById);
+				if (normalizedResponses.ok === false) {
+					sendJson(res, 400, {
+						ok: false,
+						error: normalizedResponses.error,
+						field: normalizedResponses.field,
+					});
+					return;
 				}
+				const responses = normalizedResponses.responses;
 
 				for (const image of imagesInput) {
 					if (!image || typeof image.id !== "string") continue;
@@ -1356,7 +1697,8 @@ export async function startInterviewServer(
 				// Note: don't check `completed` - allow save after submit
 
 				const payload = body as {
-					responses?: ResponseItem[];
+					responses?: unknown[];
+					savedOptionInsights?: SavedOptionInsight[];
 					images?: Array<{
 						id: string;
 						filename: string;
@@ -1368,8 +1710,18 @@ export async function startInterviewServer(
 				};
 
 				const responsesInput = Array.isArray(payload.responses) ? payload.responses : [];
+				const savedOptionInsights = normalizeSavedOptionInsights(payload.savedOptionInsights);
 				const imagesInput = Array.isArray(payload.images) ? payload.images : [];
 				const submitted = payload.submitted === true;
+				const normalizedResponses = normalizeResponseItems(responsesInput, questionById);
+				if (normalizedResponses.ok === false) {
+					sendJson(res, 400, {
+						ok: false,
+						error: normalizedResponses.error,
+						field: normalizedResponses.field,
+					});
+					return;
+				}
 
 				const snapshotBaseDir = options.snapshotDir ?? SNAPSHOTS_DIR;
 
@@ -1389,10 +1741,10 @@ export async function startInterviewServer(
 				await mkdir(snapshotPath, { recursive: true });
 
 				// Process responses - make a deep copy to avoid mutating input
-				const savedResponses: ResponseItem[] = responsesInput.map((r) => ({
-					...r,
-					value: Array.isArray(r.value) ? [...r.value] : r.value,
-					attachments: r.attachments ? [...r.attachments] : undefined,
+				const savedResponses: ResponseItem[] = normalizedResponses.responses.map((response) => ({
+					...response,
+					value: cloneResponseValue(response.value),
+					attachments: response.attachments ? [...response.attachments] : undefined,
 				}));
 
 				// Process uploaded images - save to images/ subfolder
@@ -1451,6 +1803,8 @@ export async function startInterviewServer(
 				const html = generateSavedHtml({
 					questions: snapshotQuestions,
 					answers: savedResponses,
+					optionInsights: savedOptionInsights,
+					optionKeysByQuestion,
 					meta,
 					baseStyles: STYLES,
 					themeCss,
@@ -1482,7 +1836,6 @@ export async function startInterviewServer(
 
 				const payload = body as {
 					questionId?: string;
-					existingOptions?: string[];
 					mode?: string;
 				};
 
@@ -1496,14 +1849,8 @@ export async function startInterviewServer(
 					sendJson(res, 400, { ok: false, error: "Invalid question for generation" });
 					return;
 				}
-				if (question.options.some((option) => typeof option !== "string")) {
-					sendJson(res, 400, { ok: false, error: "Generation is not available for rich options" });
-					return;
-				}
 
-				const existingOptions = Array.isArray(payload.existingOptions)
-					? payload.existingOptions.filter((o): o is string => typeof o === "string")
-					: [];
+				const existingOptions = question.options.map((option) => getOptionLabel(option).trim());
 
 				const mode = payload.mode === "review" ? "review" : "add";
 
@@ -1521,34 +1868,40 @@ export async function startInterviewServer(
 						mode,
 					);
 
-					const uniqueOptions: string[] = [];
-					const seenOptions = new Set<string>();
-					for (const option of result.options) {
-						const trimmed = option.trim();
-						if (!trimmed) continue;
-						const key = trimmed.toLowerCase();
-						if (seenOptions.has(key)) continue;
-						seenOptions.add(key);
-						uniqueOptions.push(trimmed);
-					}
+					const uniqueOptions = normalizeGeneratedOptionValues(result.options);
 
 					const reviewedQuestion = typeof result.question === "string" ? result.question.trim() : undefined;
 					const storedQuestion = questions.questions.find((q) => q.id === payload.questionId);
+					let nextOptionKeys = optionKeysByQuestion[payload.questionId] ?? [];
+					let appliedOptions: OptionValue[] = [];
 					if (storedQuestion) {
 						if (mode === "review" && reviewedQuestion && uniqueOptions.length > 0) {
+							const previousOptions = [...storedQuestion.options];
+							const previousKeys = [...(optionKeysByQuestion[payload.questionId] ?? [])];
 							storedQuestion.question = reviewedQuestion;
 							storedQuestion.options = uniqueOptions;
 							syncRecommendations(storedQuestion, uniqueOptions);
+							nextOptionKeys = reconcileOptionKeysByLabel(previousOptions, previousKeys, uniqueOptions);
+							optionKeysByQuestion[payload.questionId] = nextOptionKeys;
+							appliedOptions = uniqueOptions;
 						} else if (mode === "add") {
-							const existingKeys = new Set(existingOptions.map((option) => option.trim().toLowerCase()));
-							const newOptions = uniqueOptions.filter((option) => !existingKeys.has(option.toLowerCase()));
+							const existingKeys = new Set(storedQuestion.options.map((option) => getOptionLabel(option).trim().toLowerCase()));
+							const newOptions = uniqueOptions.filter((option) => !existingKeys.has(getOptionLabel(option).trim().toLowerCase()));
 							if (newOptions.length > 0) {
 								storedQuestion.options = storedQuestion.options.concat(newOptions);
+								nextOptionKeys = (optionKeysByQuestion[payload.questionId] ?? []).concat(newOptions.map(() => makeOptionKey()));
+								optionKeysByQuestion[payload.questionId] = nextOptionKeys;
 							}
+							appliedOptions = newOptions;
 						}
 					}
 
-					sendJson(res, 200, { ok: true, options: uniqueOptions, question: reviewedQuestion });
+					sendJson(res, 200, {
+						ok: true,
+						options: appliedOptions,
+						question: reviewedQuestion,
+						optionKeys: nextOptionKeys,
+					});
 				} catch (err) {
 					if (controller.signal.aborted) {
 						sendJson(res, 409, { ok: false, error: "Request cancelled" });
@@ -1557,6 +1910,181 @@ export async function startInterviewServer(
 					const message = err instanceof Error ? err.message : "Generation failed";
 					sendJson(res, 500, { ok: false, error: message });
 				}
+				return;
+			}
+
+			if (method === "POST" && url.pathname === "/option-insight") {
+				const body = await parseBodyOrRespond();
+				if (!body) return;
+				if (!validateTokenBody(body, sessionToken, res)) return;
+				if (completed) {
+					sendJson(res, 409, { ok: false, error: "Session closed" });
+					return;
+				}
+
+				if (!callbacks.onOptionInsight) {
+					sendJson(res, 501, { ok: false, error: "Option insight not available" });
+					return;
+				}
+
+				const payload = body as {
+					questionId?: string;
+					optionKey?: string;
+					prompt?: string;
+					model?: string | null;
+				};
+
+				if (typeof payload.questionId !== "string") {
+					sendJson(res, 400, { ok: false, error: "Missing questionId" });
+					return;
+				}
+				if (typeof payload.optionKey !== "string") {
+					sendJson(res, 400, { ok: false, error: "Missing optionKey" });
+					return;
+				}
+				if (typeof payload.prompt !== "string" || payload.prompt.trim().length === 0) {
+					sendJson(res, 400, { ok: false, error: "Prompt is required" });
+					return;
+				}
+
+				const questionCheck = ensureQuestionId(payload.questionId, questionById);
+				if (questionCheck.ok === false) {
+					sendJson(res, 400, { ok: false, error: questionCheck.error });
+					return;
+				}
+				const question = questionCheck.question;
+				const optionIndex = getOptionIndexByKey(question, optionKeysByQuestion, payload.optionKey);
+				if (optionIndex === -1 || !question.options || optionIndex >= question.options.length) {
+					sendJson(res, 400, { ok: false, error: "Invalid option for insight" });
+					return;
+				}
+
+				const controller = new AbortController();
+				res.on("close", () => {
+					if (!res.writableEnded) controller.abort();
+				});
+				touchHeartbeat();
+
+				try {
+					const option = question.options[optionIndex];
+					const optionText = getOptionLabel(option);
+					const result = await callbacks.onOptionInsight(
+						payload.questionId,
+						option,
+						payload.prompt.trim(),
+						typeof payload.model === "string" ? payload.model : null,
+						controller.signal,
+					);
+					sendJson(res, 200, { ok: true, optionText, ...result });
+				} catch (err) {
+					if (controller.signal.aborted) {
+						sendJson(res, 409, { ok: false, error: "Request cancelled" });
+						return;
+					}
+					const message = err instanceof Error ? err.message : "Option insight failed";
+					sendJson(res, 500, { ok: false, error: message });
+				}
+				return;
+			}
+
+			if (method === "POST" && url.pathname === "/option-action") {
+				const body = await parseBodyOrRespond();
+				if (!body) return;
+				if (!validateTokenBody(body, sessionToken, res)) return;
+				if (completed) {
+					sendJson(res, 409, { ok: false, error: "Session closed" });
+					return;
+				}
+
+				const payload = body as {
+					questionId?: string;
+					optionKey?: string;
+					action?: string;
+					text?: string;
+				};
+
+				if (typeof payload.questionId !== "string") {
+					sendJson(res, 400, { ok: false, error: "Missing questionId" });
+					return;
+				}
+				if (typeof payload.optionKey !== "string") {
+					sendJson(res, 400, { ok: false, error: "Missing optionKey" });
+					return;
+				}
+				touchHeartbeat();
+
+				const questionCheck = ensureQuestionId(payload.questionId, questionById);
+				if (questionCheck.ok === false) {
+					sendJson(res, 400, { ok: false, error: questionCheck.error });
+					return;
+				}
+				const question = questionCheck.question;
+				if ((question.type !== "single" && question.type !== "multi") || !question.options) {
+					sendJson(res, 400, { ok: false, error: "Invalid question for option actions" });
+					return;
+				}
+
+				const optionIndex = getOptionIndexByKey(question, optionKeysByQuestion, payload.optionKey);
+				if (optionIndex === -1) {
+					sendJson(res, 400, { ok: false, error: "Invalid option for action" });
+					return;
+				}
+
+				const currentOptions = [...question.options];
+				const currentKeys = [...(optionKeysByQuestion[question.id] ?? [])];
+				const action = payload.action;
+				const rawText = typeof payload.text === "string" ? payload.text.trim() : "";
+
+				if (action === "move-up") {
+					if (optionIndex === 0) {
+						sendJson(res, 400, { ok: false, error: "Option is already at the top" });
+						return;
+					}
+					[currentOptions[optionIndex - 1], currentOptions[optionIndex]] = [currentOptions[optionIndex], currentOptions[optionIndex - 1]];
+					[currentKeys[optionIndex - 1], currentKeys[optionIndex]] = [currentKeys[optionIndex], currentKeys[optionIndex - 1]];
+				} else if (action === "replace-text") {
+					if (!rawText) {
+						sendJson(res, 400, { ok: false, error: "Replacement text is required" });
+						return;
+					}
+					const duplicateIndex = currentOptions.findIndex((option, index) => index !== optionIndex && getOptionLabel(option).trim().toLowerCase() === rawText.toLowerCase());
+					if (duplicateIndex !== -1) {
+						sendJson(res, 400, { ok: false, error: "An option with that text already exists" });
+						return;
+					}
+					const previousText = getOptionLabel(currentOptions[optionIndex]);
+					currentOptions[optionIndex] = setOptionLabel(currentOptions[optionIndex], rawText);
+					if (question.type === "single" && question.recommended === previousText) {
+						question.recommended = rawText;
+					} else if (question.type === "multi" && Array.isArray(question.recommended)) {
+						question.recommended = question.recommended.map((option) => option === previousText ? rawText : option);
+					}
+				} else if (action === "add-option") {
+					if (!rawText) {
+						sendJson(res, 400, { ok: false, error: "New option text is required" });
+						return;
+					}
+					if (currentOptions.some((option) => getOptionLabel(option).trim().toLowerCase() === rawText.toLowerCase())) {
+						sendJson(res, 400, { ok: false, error: "An option with that text already exists" });
+						return;
+					}
+					const newOptionKey = makeOptionKey();
+					currentOptions.splice(optionIndex + 1, 0, rawText);
+					currentKeys.splice(optionIndex + 1, 0, newOptionKey);
+				} else {
+					sendJson(res, 400, { ok: false, error: "Unsupported option action" });
+					return;
+				}
+
+				question.options = currentOptions;
+				optionKeysByQuestion[question.id] = currentKeys;
+				syncRecommendations(question, currentOptions);
+
+				sendJson(res, 200, {
+					ok: true,
+					question,
+					optionKeys: currentKeys,
+				});
 				return;
 			}
 

@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- **Option clarifications for plain choice questions**: Plain string single/multi options can now reveal a separate inline `Optional clarification...` field when selected. Submitted and saved choice responses now use structured `{ option, note? }` objects instead of bare strings.
+
+### Fixed
+- **Clarification draft retention**: Switching away from a selected option now hides its clarification field without discarding the typed draft, so switching back restores the earlier text.
+- **Clarification preservation during rewrites/review**: `Use rewrite` and question-level `Review options` now preserve structured choice answers and attached clarification notes instead of degrading them into plain strings or dropping them.
+
+## [0.7.0] - 2026-04-16
+
+### Added
+- **Per-option Ask flow**: Single and multi-select options, including rich options with inline content blocks, can now open an inline `Ask` panel for option-specific follow-up questions, with prompt chips, freeform prompts, structured analysis responses, and follow-up actions like pinning, replacing text, moving options up, or adding suggested rewrites as new options.
+- **Advanced model overrides for option analysis**: The new `Ask` panel shows the default model quietly and exposes provider-first then model selection behind an Advanced section for low-clutter per-request overrides.
+
+### Changed
+- **Pinned option analyses persist in drafts and snapshots**: Saved interview snapshots and local autosave state now preserve pinned option analyses so option-level reasoning survives reloads and saved HTML revival, while staying out of submitted response payloads by default.
+- **Server-side option state now covers option mutations**: Option rewrites and reordering actions from the Ask flow now update the in-memory interview definition so saves and reopened sessions stay aligned with what the user saw.
+
 ## [0.6.2] - 2026-04-16
 
 ### Changed
@@ -22,7 +39,7 @@
 - **Review options question rewrite**: `Review options` now also rewrites the question text for clarity while keeping the existing option-review behavior.
 - **Generated/reviewed question persistence**: Generated options and reviewed question rewrites now persist in the server-side interview state, so saves, recovery, and reopened snapshots stay in sync with what the user saw in the form.
 - **Review-mode recommendation cleanup**: When reviewed options remove or rename previously recommended answers, `recommended` and `conviction` are now cleared or narrowed so saved interviews do not fail validation on reload.
-- **Rich option safety**: Generate/review actions are now disabled for questions that use rich object options with code previews, preventing review mode from flattening them into plain strings.
+- **Rich option generate/review support**: `Generate more` and `Review options` now work on rich-option questions too. Rich review responses keep structured `{ label, content? }` option objects instead of flattening them, save/reload snapshots preserve the reviewed structure, and surviving option labels keep their existing option keys so pinned Ask insights stay attached when the option genuinely survives a review pass.
 - **Saved interview answer integrity**: Reloading saved interview HTML now resolves paths only for image answers and attachments. Text, single-select, and multi-select answers remain literal so forms pre-populate correctly.
 - **Submit/save error clarity**: Client-side save/submit failures now include the original error message instead of collapsing to generic text.
 

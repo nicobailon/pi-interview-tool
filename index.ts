@@ -8,8 +8,17 @@ import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { startInterviewServer, getActiveSessions, type ResponseItem, type InterviewServerCallbacks } from "./server.js";
-import { validateQuestions, sanitizeLLMJSON, type QuestionsFile } from "./schema.js";
+import {
+	startInterviewServer,
+	getActiveSessions,
+	type ChoiceResponseValue,
+	type ResponseItem,
+	type InterviewServerCallbacks,
+	type SavedOptionInsight,
+	type AskModelOption,
+	type OptionInsightResult,
+} from "./server.js";
+import { getOptionLabel, isRichOption, validateQuestions, sanitizeLLMJSON, type OptionValue, type QuestionsFile } from "./schema.js";
 import { loadSettings, type InterviewThemeSettings } from "./settings.js";
 
 interface GlimpseWindow {
@@ -125,6 +134,8 @@ interface SavedFromMeta {
 
 interface SavedQuestionsFile extends QuestionsFile {
 	savedAnswers?: ResponseItem[];
+	savedOptionInsights?: SavedOptionInsight[];
+	optionKeysByQuestion?: Record<string, string[]>;
 	savedAt?: string;
 	wasSubmitted?: boolean;
 	savedFrom?: SavedFromMeta;
@@ -249,6 +260,9 @@ const GENERATE_OPTIONS_SYSTEM_PROMPT =
 const REVIEW_QUESTION_SYSTEM_PROMPT =
 	"You review interview questions and answer options. Preserve intent. Return only JSON with a rewritten question string and an options array.";
 
+const OPTION_INSIGHT_SYSTEM_PROMPT =
+	"You analyze a single interview answer option. Return only JSON with this shape: {\"summary\":\"...\",\"bullets\":[\"...\"],\"suggestedText\":\"...\"}. Keep summary concise, bullets short, and omit suggestedText when no rewrite is needed.";
+
 function formatModelRef(model: GenerateModelCandidate): string {
 	return `${model.provider}/${model.id}`;
 }
@@ -286,6 +300,37 @@ export function selectGenerateModels<T extends GenerateModelCandidate>(
 	}
 
 	return { primary: availableModels[0] ?? null, fallback: null };
+}
+
+function buildAskModelsData(
+	availableModels: Model<Api>[],
+	primaryModel: Model<Api> | null,
+	fallbackModel: Model<Api> | null,
+): AskModelOption[] {
+	const models: AskModelOption[] = [];
+	const seen = new Set<string>();
+	const addModel = (model: Model<Api> | null) => {
+		if (!model) return;
+		const value = `${model.provider}/${model.id}`;
+		if (seen.has(value)) return;
+		seen.add(value);
+		models.push({
+			value,
+			provider: model.provider,
+			label: model.id,
+		});
+	};
+
+	addModel(primaryModel);
+	addModel(fallbackModel);
+	for (const model of availableModels) {
+		addModel(model);
+	}
+
+	return models.sort((a, b) => {
+		if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+		return a.label.localeCompare(b.label);
+	});
 }
 
 export function extractGenerateResponseText(
@@ -393,6 +438,51 @@ function normalizeGeneratedOptions(parsed: unknown): string[] {
 	return options;
 }
 
+function normalizeGeneratedOptionValues(parsed: unknown): OptionValue[] {
+	if (!Array.isArray(parsed)) {
+		throw new Error("Expected array of options");
+	}
+
+	const normalizedInput = parsed
+		.map((option) => {
+			if (typeof option === "string") {
+				return option.trim();
+			}
+			if (!option || typeof option !== "object") {
+				return option;
+			}
+			const raw = option as Record<string, unknown>;
+			return {
+				...raw,
+				label: typeof raw.label === "string" ? raw.label.trim() : raw.label,
+			};
+		})
+		.filter((option) => {
+			if (typeof option === "string") {
+				return option.length > 0;
+			}
+			if (!option || typeof option !== "object") {
+				return true;
+			}
+			return typeof (option as Record<string, unknown>).label !== "string"
+				|| (option as Record<string, unknown>).label.length > 0;
+		});
+
+	const validated = validateQuestions({
+		questions: [{
+			id: "generated-options",
+			type: "single",
+			question: "Generated options",
+			options: normalizedInput,
+		}],
+	});
+	const options = validated.questions[0]?.options;
+	if (!options || options.length === 0) {
+		throw new Error("No valid options generated");
+	}
+	return options;
+}
+
 export function parseGeneratedOptions(text: string): string[] {
 	let parsed: unknown;
 	try {
@@ -402,6 +492,17 @@ export function parseGeneratedOptions(text: string): string[] {
 		throw new Error(`Failed to parse generated options: ${detail}`);
 	}
 	return normalizeGeneratedOptions(parsed);
+}
+
+export function parseGeneratedOptionValues(text: string): OptionValue[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(extractJSONArray(text));
+	} catch (err) {
+		const detail = err instanceof Error ? err.message : String(err);
+		throw new Error(`Failed to parse generated options: ${detail}`);
+	}
+	return normalizeGeneratedOptionValues(parsed);
 }
 
 export function parseReviewedQuestion(text: string): { question: string; options: string[] } {
@@ -424,6 +525,63 @@ export function parseReviewedQuestion(text: string): { question: string; options
 	return {
 		question: review.question.trim(),
 		options: normalizeGeneratedOptions(review.options),
+	};
+}
+
+export function parseReviewedQuestionUpdate(text: string): { question: string; options: OptionValue[] } {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(extractJSONObject(text));
+	} catch (err) {
+		const detail = err instanceof Error ? err.message : String(err);
+		throw new Error(`Failed to parse reviewed question: ${detail}`);
+	}
+	if (typeof parsed !== "object" || parsed === null) {
+		throw new Error("Expected reviewed question object");
+	}
+
+	const review = parsed as Record<string, unknown>;
+	if (typeof review.question !== "string" || !review.question.trim()) {
+		throw new Error("Reviewed question must include a non-empty question string");
+	}
+
+	const options = normalizeGeneratedOptionValues(review.options);
+	if (options.some((option) => !isRichOption(option))) {
+		throw new Error("Reviewed rich options must all be objects with label");
+	}
+
+	return {
+		question: review.question.trim(),
+		options,
+	};
+}
+
+export function parseOptionInsight(text: string): OptionInsightResult {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(extractJSONObject(text));
+	} catch (err) {
+		const detail = err instanceof Error ? err.message : String(err);
+		throw new Error(`Failed to parse option insight: ${detail}`);
+	}
+	if (typeof parsed !== "object" || parsed === null) {
+		throw new Error("Expected option insight object");
+	}
+
+	const insight = parsed as Record<string, unknown>;
+	if (typeof insight.summary !== "string" || !insight.summary.trim()) {
+		throw new Error("Option insight must include a non-empty summary string");
+	}
+	const bullets = Array.isArray(insight.bullets)
+		? insight.bullets.filter((bullet): bullet is string => typeof bullet === "string" && bullet.trim().length > 0).map((bullet) => bullet.trim())
+		: [];
+
+	return {
+		summary: insight.summary.trim(),
+		bullets: bullets.length > 0 ? bullets : undefined,
+		suggestedText: typeof insight.suggestedText === "string" && insight.suggestedText.trim().length > 0
+			? insight.suggestedText.trim()
+			: undefined,
 	};
 }
 
@@ -452,6 +610,24 @@ export function loadSavedInterview(html: string, filePath: string): SavedQuestio
 	const savedAnswers = Array.isArray(raw.savedAnswers)
 		? resolveAnswerPaths(raw.savedAnswers as ResponseItem[], snapshotDir, questionTypeById)
 		: undefined;
+	const savedOptionInsights = Array.isArray(raw.savedOptionInsights)
+		? (raw.savedOptionInsights as SavedOptionInsight[]).filter((item) =>
+			item &&
+			typeof item.id === "string" &&
+			typeof item.questionId === "string" &&
+			typeof item.optionKey === "string" &&
+			typeof item.optionText === "string" &&
+			typeof item.prompt === "string" &&
+			typeof item.summary === "string"
+		)
+		: undefined;
+	const optionKeysByQuestion = raw.optionKeysByQuestion && typeof raw.optionKeysByQuestion === "object"
+		? Object.fromEntries(
+			Object.entries(raw.optionKeysByQuestion as Record<string, unknown>)
+				.filter(([, value]) => Array.isArray(value) && value.every((key) => typeof key === "string"))
+				.map(([questionId, value]) => [questionId, [...(value as string[])]])
+		)
+		: undefined;
 
 	// Validate savedFrom if present
 	let savedFrom: SavedFromMeta | undefined;
@@ -470,6 +646,8 @@ export function loadSavedInterview(html: string, filePath: string): SavedQuestio
 	return {
 		...validated,
 		savedAnswers,
+		savedOptionInsights,
+		optionKeysByQuestion,
 		savedAt: typeof raw.savedAt === "string" ? raw.savedAt : undefined,
 		wasSubmitted: typeof raw.wasSubmitted === "boolean" ? raw.wasSubmitted : undefined,
 		savedFrom,
@@ -507,11 +685,41 @@ function resolvePathValue(value: string | string[], baseDir: string): string | s
 	return typeof value === "string" && value ? resolveImagePath(value, baseDir) : value;
 }
 
+function isChoiceResponseValue(value: unknown): value is ChoiceResponseValue {
+	return !!value && typeof value === "object" && !Array.isArray(value) && typeof (value as ChoiceResponseValue).option === "string";
+}
+
+function formatResponseValue(value: ResponseItem["value"]): string {
+	if (Array.isArray(value)) {
+		if (value.every(isChoiceResponseValue)) {
+			return value.map((item) => item.note ? `${item.option} (${item.note})` : item.option).join(", ");
+		}
+		return value.join(", ");
+	}
+	if (isChoiceResponseValue(value)) {
+		return value.note ? `${value.option} (${value.note})` : value.option;
+	}
+	return value;
+}
+
+function hasAnswerValue(value: ResponseItem["value"]): boolean {
+	if (Array.isArray(value)) {
+		if (value.every(isChoiceResponseValue)) {
+			return value.some((item) => item.option.trim() !== "");
+		}
+		return value.some((item) => typeof item === "string" && item.trim() !== "");
+	}
+	if (isChoiceResponseValue(value)) {
+		return value.option.trim() !== "";
+	}
+	return typeof value === "string" && value.trim() !== "";
+}
+
 function formatResponses(responses: ResponseItem[]): string {
 	if (responses.length === 0) return "(none)";
 	return responses
 		.map((resp) => {
-			const value = Array.isArray(resp.value) ? resp.value.join(", ") : resp.value;
+			const value = formatResponseValue(resp.value);
 			let line = `- ${resp.id}: ${value}`;
 			if (resp.attachments && resp.attachments.length > 0) {
 				line += ` [attachments: ${resp.attachments.join(", ")}]`;
@@ -523,24 +731,12 @@ function formatResponses(responses: ResponseItem[]): string {
 
 function hasAnyAnswers(responses: ResponseItem[]): boolean {
 	if (!responses || responses.length === 0) return false;
-	return responses.some((resp) => {
-		if (!resp || resp.value == null) return false;
-		if (Array.isArray(resp.value)) {
-			return resp.value.some((v) => typeof v === "string" && v.trim() !== "");
-		}
-		return typeof resp.value === "string" && resp.value.trim() !== "";
-	});
+	return responses.some((resp) => !!resp && resp.value != null && hasAnswerValue(resp.value));
 }
 
 function filterAnsweredResponses(responses: ResponseItem[]): ResponseItem[] {
 	if (!responses) return [];
-	return responses.filter((resp) => {
-		if (!resp || resp.value == null) return false;
-		if (Array.isArray(resp.value)) {
-			return resp.value.some((v) => typeof v === "string" && v.trim() !== "");
-		}
-		return typeof resp.value === "string" && resp.value.trim() !== "";
-	});
+	return responses.filter((resp) => !!resp && resp.value != null && hasAnswerValue(resp.value));
 }
 
 export default function (pi: ExtensionAPI) {
@@ -608,12 +804,10 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let availableGenerateModels: Model<Api>[] = [];
-			if (!configuredGenerateModel && !ctx.model) {
-				try {
-					availableGenerateModels = ctx.modelRegistry.getAvailable();
-				} catch {
-					// Leave generation disabled when model discovery is unavailable.
-				}
+			try {
+				availableGenerateModels = ctx.modelRegistry.getAvailable();
+			} catch {
+				// Leave generation disabled when model discovery is unavailable.
 			}
 
 			const { primary: generateModel, fallback: fallbackGenerateModel } = selectGenerateModels(
@@ -621,6 +815,8 @@ export default function (pi: ExtensionAPI) {
 				ctx.model ?? null,
 				availableGenerateModels,
 			);
+			const askModels = buildAskModelsData(availableGenerateModels, generateModel, fallbackGenerateModel);
+			const defaultAskModel = generateModel ? formatModelRef(generateModel) : null;
 
 			// Expand ~ in snapshotDir if present
 			const snapshotDir = settings.snapshotDir
@@ -697,8 +893,14 @@ export default function (pi: ExtensionAPI) {
 				signal?.addEventListener("abort", handleAbort, { once: true });
 
 				let onGenerate: InterviewServerCallbacks["onGenerate"];
+				let onOptionInsight: InterviewServerCallbacks["onOptionInsight"];
 				if (generateModel) {
-					const generateOptions = async (model: Model<Api>, prompt: string, generateSignal: AbortSignal) => {
+					const generateOptions = async <T>(
+						model: Model<Api>,
+						prompt: string,
+						generateSignal: AbortSignal,
+						parse: (text: string) => T,
+					) => {
 						const modelRef = formatModelRef(model);
 						const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 						if (!auth.ok) throw new Error(`${modelRef}: ${auth.error}`);
@@ -710,10 +912,15 @@ export default function (pi: ExtensionAPI) {
 							{ apiKey: auth.apiKey, headers: auth.headers, signal: generateSignal },
 						);
 
-						return parseGeneratedOptions(extractGenerateResponseText(modelRef, response));
+						return parse(extractGenerateResponseText(modelRef, response));
 					};
 
-					const reviewQuestion = async (model: Model<Api>, prompt: string, generateSignal: AbortSignal) => {
+					const reviewQuestion = async <T>(
+						model: Model<Api>,
+						prompt: string,
+						generateSignal: AbortSignal,
+						parse: (text: string) => T,
+					) => {
 						const modelRef = formatModelRef(model);
 						const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 						if (!auth.ok) throw new Error(`${modelRef}: ${auth.error}`);
@@ -725,12 +932,30 @@ export default function (pi: ExtensionAPI) {
 							{ apiKey: auth.apiKey, headers: auth.headers, signal: generateSignal },
 						);
 
-						return parseReviewedQuestion(extractGenerateResponseText(modelRef, response));
+						return parse(extractGenerateResponseText(modelRef, response));
 					};
 
-					onGenerate = async (questionId, existingOptions, generateSignal, mode) => {
+					const optionInsight = async (model: Model<Api>, prompt: string, generateSignal: AbortSignal) => {
+						const modelRef = formatModelRef(model);
+						const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+						if (!auth.ok) throw new Error(`${modelRef}: ${auth.error}`);
+						if (!auth.apiKey) throw new Error(`No API key for ${modelRef}`);
+
+						const response = await complete(
+							model,
+							createGenerateContext(prompt, OPTION_INSIGHT_SYSTEM_PROMPT),
+							{ apiKey: auth.apiKey, headers: auth.headers, signal: generateSignal },
+						);
+
+						const parsed = parseOptionInsight(extractGenerateResponseText(modelRef, response));
+						return { ...parsed, modelUsed: modelRef };
+					};
+
+						onGenerate = async (questionId, existingOptions, generateSignal, mode) => {
 						const question = questionsData.questions.find((q) => q.id === questionId);
 						if (!question) throw new Error(`Unknown question: ${questionId}`);
+						const optionValues = question.options ?? [];
+						const usesRichOptions = optionValues.some(isRichOption);
 
 						const existingList = existingOptions.length > 0
 							? existingOptions.map((option) => `- ${option}`).join("\n")
@@ -745,47 +970,94 @@ export default function (pi: ExtensionAPI) {
 									: question.recommended;
 								recommended = `\nRecommended: ${value}`;
 							}
-							prompt = [
-								"Review this interview question and its options.",
-								"Rewrite the question so it is easier to understand while preserving the original intent.",
-								"Review the options the same way you already would: keep good ones as-is, fix bad ones, add missing ones, and remove bad ones.",
-								"Return ONLY JSON in this format:",
-								'{"question":"Clearer question text","options":["Option A","Option B","Option C"]}',
-								"",
-								questionsData.title ? `Interview: ${questionsData.title}` : null,
-								questionsData.description ? `Interview context: ${questionsData.description}` : null,
-								`Question: ${question.question}`,
-								question.context ? `Question context: ${question.context}` : null,
-								recommended || null,
-								"",
-								"Current options:",
-								existingList,
-							].filter((line) => line !== null).join("\n");
+							if (usesRichOptions) {
+								prompt = [
+									"Review this interview question and its options.",
+									"Rewrite the question so it is easier to understand while preserving the original intent.",
+									"Review the rich options as full structured objects: keep good ones as-is, fix bad ones, add missing ones, and remove bad ones.",
+									"Return ONLY JSON in this format:",
+									'{"question":"Clearer question text","options":[{"label":"Option A","content":{"source":"Explanation","lang":"md"}}]}',
+									"Each option must be an object with `label` and optional `content`.",
+									"",
+									questionsData.title ? `Interview: ${questionsData.title}` : null,
+									questionsData.description ? `Interview context: ${questionsData.description}` : null,
+									`Question: ${question.question}`,
+									question.context ? `Question context: ${question.context}` : null,
+									recommended || null,
+									"",
+									"Current options JSON:",
+									JSON.stringify(optionValues, null, 2),
+								].filter((line) => line !== null).join("\n");
+							} else {
+								prompt = [
+									"Review this interview question and its options.",
+									"Rewrite the question so it is easier to understand while preserving the original intent.",
+									"Review the options the same way you already would: keep good ones as-is, fix bad ones, add missing ones, and remove bad ones.",
+									"Return ONLY JSON in this format:",
+									'{"question":"Clearer question text","options":["Option A","Option B","Option C"]}',
+									"",
+									questionsData.title ? `Interview: ${questionsData.title}` : null,
+									questionsData.description ? `Interview context: ${questionsData.description}` : null,
+									`Question: ${question.question}`,
+									question.context ? `Question context: ${question.context}` : null,
+									recommended || null,
+									"",
+									"Current options:",
+									existingList,
+								].filter((line) => line !== null).join("\n");
+							}
 						} else {
-							prompt = [
-								"Generate 3 new, distinct options for this question.",
-								"Return ONLY a JSON array of short option strings. No explanation, no markdown.",
-								"",
-								`Question: ${question.question}`,
-								question.context ? `Context: ${question.context}` : null,
-								"",
-								"Existing options (do NOT repeat):",
-								existingList,
-								"",
-								'Format: ["Option A", "Option B", "Option C"]',
-							].filter((line) => line !== null).join("\n");
+							if (usesRichOptions) {
+								prompt = [
+									"Generate 3 new, distinct options for this question.",
+									"Return ONLY a JSON array.",
+									"Each item may be either a short option string or an object with `label` and optional `content`.",
+									"Use an object when a new option needs supporting detail or example content.",
+									"",
+									`Question: ${question.question}`,
+									question.context ? `Context: ${question.context}` : null,
+									"",
+									"Existing options JSON (do NOT repeat labels):",
+									JSON.stringify(optionValues, null, 2),
+									"",
+									'Format: ["Option A", {"label":"Option B","content":{"source":"Explanation","lang":"md"}}]',
+								].filter((line) => line !== null).join("\n");
+							} else {
+								prompt = [
+									"Generate 3 new, distinct options for this question.",
+									"Return ONLY a JSON array of short option strings. No explanation, no markdown.",
+									"",
+									`Question: ${question.question}`,
+									question.context ? `Context: ${question.context}` : null,
+									"",
+									"Existing options (do NOT repeat):",
+									existingList,
+									"",
+									'Format: ["Option A", "Option B", "Option C"]',
+								].filter((line) => line !== null).join("\n");
+							}
 						}
 
 						if (mode === "review") {
-							let result: { question: string; options: string[] };
+							let result: { question: string; options: OptionValue[] };
 							try {
-								result = await reviewQuestion(generateModel, prompt, generateSignal);
+								result = await reviewQuestion(
+									generateModel,
+									prompt,
+									generateSignal,
+									usesRichOptions ? parseReviewedQuestionUpdate : parseReviewedQuestion,
+								);
 							} catch (err) {
 								if (!fallbackGenerateModel || generateSignal.aborted) {
 									throw err;
 								}
 								try {
-									result = await reviewQuestion(fallbackGenerateModel, prompt, generateSignal);
+									result = await reviewQuestion(
+										fallbackGenerateModel,
+										prompt,
+										generateSignal,
+										usesRichOptions ? parseReviewedQuestionUpdate : parseReviewedQuestion,
+									);
 								} catch (fallbackErr) {
 									const primaryMessage = err instanceof Error ? err.message : String(err);
 									const fallbackMessage = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
@@ -796,15 +1068,25 @@ export default function (pi: ExtensionAPI) {
 							return result;
 						}
 
-						let options: string[];
+						let options: OptionValue[];
 						try {
-							options = await generateOptions(generateModel, prompt, generateSignal);
+							options = await generateOptions(
+								generateModel,
+								prompt,
+								generateSignal,
+								usesRichOptions ? parseGeneratedOptionValues : parseGeneratedOptions,
+							);
 						} catch (err) {
 							if (!fallbackGenerateModel || generateSignal.aborted) {
 								throw err;
 							}
 							try {
-								options = await generateOptions(fallbackGenerateModel, prompt, generateSignal);
+								options = await generateOptions(
+									fallbackGenerateModel,
+									prompt,
+									generateSignal,
+									usesRichOptions ? parseGeneratedOptionValues : parseGeneratedOptions,
+								);
 							} catch (fallbackErr) {
 								const primaryMessage = err instanceof Error ? err.message : String(err);
 								const fallbackMessage = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
@@ -813,6 +1095,66 @@ export default function (pi: ExtensionAPI) {
 						}
 
 						return { options };
+					};
+
+					const getExplicitModel = (modelOverride: string): Model<Api> => {
+						const slashIndex = modelOverride.indexOf("/");
+						if (slashIndex <= 0 || slashIndex === modelOverride.length - 1) {
+							throw new Error(`Invalid model override: ${modelOverride}. Use provider/model-id.`);
+						}
+						const selectedModel = ctx.modelRegistry.find(
+							modelOverride.slice(0, slashIndex),
+							modelOverride.slice(slashIndex + 1),
+						);
+						if (!selectedModel) {
+							throw new Error(`Model not found: ${modelOverride}`);
+						}
+						return selectedModel;
+					};
+
+					onOptionInsight = async (questionId, option, prompt, modelOverride, generateSignal) => {
+						const question = questionsData.questions.find((q) => q.id === questionId);
+						if (!question) throw new Error(`Unknown question: ${questionId}`);
+						const optionText = getOptionLabel(option);
+						const optionContent = typeof option === "string" ? null : option.content;
+
+						const questionPrompt = [
+							"Analyze this single interview answer option.",
+							"Be concrete and concise.",
+							"Explain what is good or risky about the option, and suggest a rewrite only if it would materially improve clarity.",
+							"Return ONLY JSON with summary, bullets, and optional suggestedText.",
+							"",
+							questionsData.title ? `Interview: ${questionsData.title}` : null,
+							questionsData.description ? `Interview context: ${questionsData.description}` : null,
+							`Question: ${question.question}`,
+							question.context ? `Question context: ${question.context}` : null,
+							`Option: ${optionText}`,
+							optionContent?.title ? `Option content title: ${optionContent.title}` : null,
+							optionContent?.file ? `Option content file: ${optionContent.file}` : null,
+							optionContent?.lines ? `Option content lines: ${optionContent.lines}` : null,
+							optionContent?.lang ? `Option content language: ${optionContent.lang}` : null,
+							optionContent?.source ? `Option content:\n${optionContent.source}` : null,
+							`User request: ${prompt}`,
+						].filter((line) => line !== null).join("\n");
+
+						if (modelOverride) {
+							return await optionInsight(getExplicitModel(modelOverride), questionPrompt, generateSignal);
+						}
+
+						try {
+							return await optionInsight(generateModel, questionPrompt, generateSignal);
+						} catch (err) {
+							if (!fallbackGenerateModel || generateSignal.aborted) {
+								throw err;
+							}
+							try {
+								return await optionInsight(fallbackGenerateModel, questionPrompt, generateSignal);
+							} catch (fallbackErr) {
+								const primaryMessage = err instanceof Error ? err.message : String(err);
+								const fallbackMessage = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+								throw new Error(`${primaryMessage}. Fallback failed: ${fallbackMessage}`);
+							}
+						}
 					};
 				}
 
@@ -829,7 +1171,11 @@ export default function (pi: ExtensionAPI) {
 						snapshotDir,
 						autoSaveOnSubmit: settings.autoSaveOnSubmit ?? true,
 						savedAnswers: questionsData.savedAnswers,
+						savedOptionInsights: questionsData.savedOptionInsights,
+						optionKeysByQuestion: questionsData.optionKeysByQuestion,
 						canGenerate: generateModel !== null,
+						askModels,
+						defaultAskModel,
 					},
 					{
 						onSubmit: (responses) => finish("completed", responses),
@@ -838,6 +1184,7 @@ export default function (pi: ExtensionAPI) {
 								? finish("timeout", partialResponses ?? [])
 								: finish("cancelled", partialResponses ?? [], reason),
 						onGenerate,
+						onOptionInsight,
 					}
 				)
 					.then(async (handle) => {

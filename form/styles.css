@@ -239,6 +239,22 @@ body {
   min-width: 0;
 }
 
+.option-item-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.option-item-label {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 20px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .option-item:hover {
   border-color: var(--border-focus);
   background: var(--bg-hover);
@@ -334,7 +350,7 @@ input[type="checkbox"] {
   display: inline-grid;
   place-content: center;
   margin: 0;
-  margin-top: 3px;
+  margin-top: 2px;
   flex-shrink: 0;
 }
 
@@ -1556,25 +1572,11 @@ button {
 
 /* Option with code */
 .option-item.has-code {
-  position: relative;
-  flex-direction: column;
-  align-items: stretch;
   min-width: 0;
 }
 
-.option-item.has-code > input {
-  position: absolute;
-  top: 6px;
-  left: 8px;
-}
-
-.option-item.has-code > span:first-of-type {
-  margin-left: 1.5rem;
-}
-
 .option-item.has-code .code-block {
-  margin-top: 0.5rem;
-  margin-left: 1.5rem;
+  margin: 0;
 }
 
 /* Question-level code block */
@@ -1900,6 +1902,320 @@ button {
   animation: option-slide-in 0.25s ease-out backwards;
 }
 
+.option-row {
+  position: relative;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.option-row.generated {
+  animation: option-slide-in 0.25s ease-out backwards;
+}
+
+.option-row:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-hover);
+}
+
+.option-row.focused {
+  border-color: var(--card-accent, var(--accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--card-accent, var(--accent)) 20%, transparent);
+}
+
+.option-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: var(--option-padding);
+}
+
+.option-row-main .option-item {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.option-row-main .option-item:hover,
+.option-row-main .option-item.focused {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.option-ask-btn {
+  align-self: center;
+  margin-left: auto;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 12%, transparent);
+  color: var(--card-accent, var(--accent));
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease, background 150ms ease;
+}
+
+.option-row:hover .option-ask-btn,
+.option-row:focus-within .option-ask-btn,
+.option-row.focused .option-ask-btn,
+.option-row.ask-open .option-ask-btn {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.option-row.ask-open {
+  border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 55%, var(--border-muted));
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 6%, var(--bg-elevated));
+  overflow: hidden;
+}
+
+.option-row.ask-open .option-ask-btn {
+  margin-top: 2px;
+}
+
+.option-note-wrap {
+  margin: 0 16px 16px 42px;
+}
+
+.option-note-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-body);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+}
+
+.option-note-input::placeholder {
+  color: var(--fg-dim);
+}
+
+.option-insight-panel {
+  display: grid;
+  gap: 10px;
+  margin: 0 16px 16px 16px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--card-accent, var(--accent)) 22%, var(--border-muted));
+}
+
+.option-insight-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.option-insight-model,
+.option-insight-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.option-insight-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.option-insight-chip,
+.option-insight-secondary,
+.option-insight-primary,
+.option-insight-submit,
+.option-insight-advanced-toggle,
+.option-insight-unpin {
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--font-body);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.option-insight-chip,
+.option-insight-secondary,
+.option-insight-primary,
+.option-insight-submit,
+.option-insight-unpin {
+  padding: 6px 10px;
+}
+
+.option-insight-chip.active,
+.option-insight-primary,
+.option-insight-submit {
+  border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 55%, transparent);
+  color: var(--card-accent, var(--accent));
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 10%, transparent);
+}
+
+.option-insight-input,
+.option-insight-select {
+  width: 100%;
+  border: 1px solid var(--border-muted);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--bg-body);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+
+.option-insight-input {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.option-insight-advanced-toggle {
+  padding: 0;
+  border: none;
+  color: var(--fg-muted);
+}
+
+.option-insight-advanced {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.option-insight-actions,
+.option-insight-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.option-insight-error {
+  font-size: 11px;
+  color: var(--error);
+}
+
+.option-insight-result {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border-muted);
+  padding-top: 10px;
+}
+
+.option-insight-summary {
+  margin: 0;
+  color: var(--fg);
+}
+
+.option-insight-summary.pinned {
+  font-size: 12px;
+}
+
+.option-insight-bullets {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--fg-muted);
+}
+
+.option-insight-suggestion-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+.option-insight-suggested-text {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-body);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.option-insight-suggested-text.compact {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.option-insight-pinned-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 16px 16px;
+}
+
+.option-insight-pinned {
+  border: 1px solid var(--border-muted);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-body) 88%, transparent);
+  display: grid;
+  gap: 6px;
+}
+
+.option-insight-pinned-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.option-insight-pinned-prompt {
+  font-size: 11px;
+  color: var(--card-accent, var(--accent));
+  font-family: var(--font-mono);
+}
+
+.option-insight-unpin {
+  padding: 4px 8px;
+}
+
+@media (max-width: 640px) {
+  .option-row-main {
+    flex-wrap: wrap;
+  }
+
+  .option-ask-btn {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+    margin-left: 1.5rem;
+  }
+
+  .option-insight-panel,
+  .option-insight-pinned-list {
+    margin-left: 1rem;
+    margin-right: 1rem;
+  }
+
+  .option-insight-meta-row,
+  .option-insight-actions,
+  .option-insight-result-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .option-insight-advanced {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Side-by-side layout */
 .question-side-layout {
   display: grid;
@@ -1919,4 +2235,3 @@ button {
     grid-template-columns: 1fr;
   }
 }
-

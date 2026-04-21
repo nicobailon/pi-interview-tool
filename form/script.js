@@ -6,6 +6,10 @@
   const cwd = data.cwd || "";
   const gitBranch = data.gitBranch || "";
   const timeout = typeof data.timeout === "number" ? data.timeout : 0;
+  const askModels = Array.isArray(data.askModels)
+    ? data.askModels.filter((model) => model && typeof model.value === "string" && typeof model.provider === "string")
+    : [];
+  const defaultAskModel = typeof data.defaultAskModel === "string" ? data.defaultAskModel : null;
 
   const titleEl = document.getElementById("form-title");
   const descriptionEl = document.getElementById("form-description");
@@ -37,6 +41,12 @@
   const imagePathState = new Map();
   const attachState = new Map();
   const attachPathState = new Map();
+  const optionKeyState = new Map();
+  const choiceNoteState = new Map();
+  const optionInsightState = {
+    active: null,
+    pinned: new Map(),
+  };
   const nav = {
     questionIndex: 0,
     optionIndex: 0,
@@ -76,6 +86,12 @@
     dismissed: false,
     knownIds: new Set(),
   };
+  const ASK_PROMPT_CHIPS = [
+    { key: "explain", label: "Explain this", prompt: "Explain this better." },
+    { key: "why", label: "Why this option?", prompt: "Why is this option like that?" },
+    { key: "tradeoffs", label: "Tradeoffs", prompt: "What are the tradeoffs of this option?" },
+    { key: "fail", label: "When would this fail?", prompt: "When would this option fail or be the wrong choice?" },
+  ];
 
   function updateCountdownBadge(secondsLeft, totalSeconds) {
     if (!countdownBadge || !countdownValue || !countdownRingProgress) return;
@@ -513,15 +529,111 @@
     return typeof option === "string" ? option : option.label;
   }
 
+  function questionCanClarifyOption(question) {
+    return (question.type === "single" || question.type === "multi")
+      && Array.isArray(question.options)
+      && question.options.length > 0
+      && question.options.every((option) => typeof option === "string");
+  }
+
+  function isChoiceResponseValue(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && typeof value.option === "string";
+  }
+
+  function normalizeChoiceResponseValue(value) {
+    if (!isChoiceResponseValue(value)) return null;
+    const option = value.option.trim();
+    if (!option) return null;
+    const note = typeof value.note === "string" ? value.note.trim() : "";
+    return note ? { option, note } : { option };
+  }
+
+  function renameChoiceAnswerValue(question, value, previousOption, nextOption) {
+    if (!nextOption || (question.type !== "single" && question.type !== "multi")) {
+      return value;
+    }
+
+    if (question.type === "single") {
+      const choiceValue = normalizeChoiceResponseValue(value);
+      if (!choiceValue || choiceValue.option !== previousOption) return value;
+      return choiceValue.note ? { option: nextOption, note: choiceValue.note } : { option: nextOption };
+    }
+
+    if (!Array.isArray(value)) return value;
+    return value.map((item) => {
+      const choiceValue = normalizeChoiceResponseValue(item);
+      if (!choiceValue || choiceValue.option !== previousOption) return item;
+      return choiceValue.note ? { option: nextOption, note: choiceValue.note } : { option: nextOption };
+    });
+  }
+
+  function preserveChoiceAnswerValue(question, value, validLabels) {
+    if (question.type === "single") {
+      const choiceValue = normalizeChoiceResponseValue(value);
+      if (!choiceValue || !validLabels.has(choiceValue.option)) return "";
+      return choiceValue;
+    }
+
+    if (question.type === "multi") {
+      if (!Array.isArray(value)) return [];
+      return value
+        .map((item) => normalizeChoiceResponseValue(item))
+        .filter((item) => item && validLabels.has(item.option));
+    }
+
+    return value;
+  }
+
+  function getChoiceNotes(questionId) {
+    return choiceNoteState.get(questionId) || new Map();
+  }
+
+  function getChoiceNote(questionId, optionLabel) {
+    return getChoiceNotes(questionId).get(optionLabel) || "";
+  }
+
+  function setChoiceNote(questionId, optionLabel, note) {
+    const normalizedNote = typeof note === "string" ? note.trim() : "";
+    const existing = choiceNoteState.get(questionId) || new Map();
+    if (!normalizedNote) {
+      existing.delete(optionLabel);
+      if (existing.size === 0) {
+        choiceNoteState.delete(questionId);
+        return;
+      }
+      choiceNoteState.set(questionId, existing);
+      return;
+    }
+    existing.set(optionLabel, normalizedNote);
+    choiceNoteState.set(questionId, existing);
+  }
+
+  function clearChoiceNotes(questionId) {
+    choiceNoteState.delete(questionId);
+  }
+
+  function getSelectedOptionLabels(questionId) {
+    return Array.from(
+      formEl.querySelectorAll(`input[name="${escapeSelector(questionId)}"]:checked`)
+    )
+      .map((input) => input.value)
+      .filter((value) => value && value !== "__other__");
+  }
+
+  function syncChoiceNotesWithSelection(question) {
+    if (!questionCanClarifyOption(question)) return;
+  }
+
   function isRichOption(option) {
     return typeof option === "object" && option !== null && "label" in option;
   }
 
   function syncRecommendations(question, options) {
+    const optionLabels = options.map((option) => getOptionLabel(option));
     if (!question.recommended) return;
 
     if (question.type === "single") {
-      if (typeof question.recommended === "string" && options.includes(question.recommended)) {
+      if (typeof question.recommended === "string" && optionLabels.includes(question.recommended)) {
         return;
       }
       delete question.recommended;
@@ -537,13 +649,938 @@
 
     const nextRecommended = (Array.isArray(question.recommended)
       ? question.recommended
-      : [question.recommended]).filter((option) => options.includes(option));
+      : [question.recommended]).filter((option) => optionLabels.includes(option));
     if (nextRecommended.length === 0) {
       delete question.recommended;
       delete question.conviction;
       return;
     }
     question.recommended = nextRecommended;
+  }
+
+  function makeClientId(prefix = "id") {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return `${prefix}-${window.crypto.randomUUID()}`;
+    }
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function questionSupportsOptionInsights(question) {
+    return (question.type === "single" || question.type === "multi") &&
+      Array.isArray(question.options) &&
+      question.options.length > 0;
+  }
+
+  function questionCanAskAboutOption(question) {
+    return !!data.canGenerate && questionSupportsOptionInsights(question);
+  }
+
+  function normalizeOptionKeysFromData() {
+    const raw = data.optionKeysByQuestion && typeof data.optionKeysByQuestion === "object"
+      ? data.optionKeysByQuestion
+      : {};
+
+    questions.forEach((question) => {
+      if (!questionSupportsOptionInsights(question)) return;
+      const rawKeys = Array.isArray(raw[question.id]) ? raw[question.id] : [];
+      const keys = rawKeys.length === question.options.length && rawKeys.every((key) => typeof key === "string" && key)
+        ? [...rawKeys]
+        : question.options.map(() => makeClientId(`opt-${question.id}`));
+      optionKeyState.set(question.id, keys);
+    });
+  }
+
+  function getOptionKeys(questionId) {
+    return optionKeyState.get(questionId) || [];
+  }
+
+  function setOptionKeys(questionId, keys) {
+    optionKeyState.set(questionId, Array.isArray(keys) ? [...keys] : []);
+  }
+
+  function getOptionIndexByKey(questionId, optionKey) {
+    return getOptionKeys(questionId).indexOf(optionKey);
+  }
+
+  function getOptionTextByKey(questionId, optionKey) {
+    const question = questions.find((q) => q.id === questionId);
+    if (!question || !Array.isArray(question.options)) return "";
+    const index = getOptionIndexByKey(questionId, optionKey);
+    if (index < 0 || index >= question.options.length) return "";
+    return getOptionLabel(question.options[index]);
+  }
+
+  function providerLabel(provider) {
+    if (!provider) return "";
+    if (provider === "openai") return "OpenAI";
+    if (provider === "google") return "Google";
+    if (provider === "anthropic") return "Anthropic";
+    return provider.charAt(0).toUpperCase() + provider.slice(1);
+  }
+
+  function parseModelValue(modelValue) {
+    if (typeof modelValue !== "string") return { provider: "", model: "" };
+    const slashIndex = modelValue.indexOf("/");
+    if (slashIndex <= 0 || slashIndex === modelValue.length - 1) {
+      return { provider: "", model: modelValue };
+    }
+    return {
+      provider: modelValue.slice(0, slashIndex),
+      model: modelValue.slice(slashIndex + 1),
+    };
+  }
+
+  function getModelsForProvider(provider) {
+    return askModels.filter((model) => model.provider === provider);
+  }
+
+  function getFirstProvider() {
+    return askModels[0]?.provider || "";
+  }
+
+  function createDefaultActiveInsight(questionId, optionKey) {
+    const selectedModel = askModels.some((model) => model.value === defaultAskModel)
+      ? defaultAskModel
+      : (askModels[0]?.value || null);
+    const parsed = parseModelValue(selectedModel);
+    return {
+      questionId,
+      optionKey,
+      prompt: "",
+      selectedChip: null,
+      loading: false,
+      error: "",
+      result: null,
+      advancedOpen: false,
+      selectedProvider: parsed.provider || getFirstProvider(),
+      selectedModel,
+      abortController: null,
+    };
+  }
+
+  function getActiveInsight(questionId, optionKey) {
+    const active = optionInsightState.active;
+    return active && active.questionId === questionId && active.optionKey === optionKey
+      ? active
+      : null;
+  }
+
+  function getPinnedInsights(questionId, optionKey) {
+    const questionInsights = optionInsightState.pinned.get(questionId) || [];
+    return questionInsights.filter((insight) => insight.optionKey === optionKey);
+  }
+
+  function normalizeSavedOptionInsights(input) {
+    if (!Array.isArray(input)) return [];
+    return input
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        id: typeof item.id === "string" ? item.id : makeClientId("insight"),
+        questionId: typeof item.questionId === "string" ? item.questionId : "",
+        optionKey: typeof item.optionKey === "string" ? item.optionKey : "",
+        optionText: typeof item.optionText === "string" ? item.optionText : "",
+        prompt: typeof item.prompt === "string" ? item.prompt : "",
+        summary: typeof item.summary === "string" ? item.summary : "",
+        bullets: Array.isArray(item.bullets)
+          ? item.bullets.filter((bullet) => typeof bullet === "string" && bullet.trim()).map((bullet) => bullet.trim())
+          : [],
+        suggestedText: typeof item.suggestedText === "string" ? item.suggestedText : undefined,
+        modelUsed: typeof item.modelUsed === "string" ? item.modelUsed : item.modelUsed === null ? null : undefined,
+        createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+      }))
+      .filter((item) => item.questionId && item.optionKey && item.summary);
+  }
+
+  function restoreSavedOptionInsights(input) {
+    optionInsightState.pinned.clear();
+    normalizeSavedOptionInsights(input).forEach((insight) => {
+      const existing = optionInsightState.pinned.get(insight.questionId) || [];
+      existing.push(insight);
+      optionInsightState.pinned.set(insight.questionId, existing);
+    });
+  }
+
+  function serializeSavedOptionInsights() {
+    return Array.from(optionInsightState.pinned.values())
+      .flat()
+      .map((insight) => ({
+        id: insight.id,
+        questionId: insight.questionId,
+        optionKey: insight.optionKey,
+        optionText: insight.optionText,
+        prompt: insight.prompt,
+        summary: insight.summary,
+        bullets: Array.isArray(insight.bullets) ? [...insight.bullets] : [],
+        suggestedText: insight.suggestedText,
+        modelUsed: insight.modelUsed ?? null,
+        createdAt: insight.createdAt,
+      }));
+  }
+
+  function removePinnedInsight(questionId, insightId) {
+    const existing = optionInsightState.pinned.get(questionId) || [];
+    const next = existing.filter((insight) => insight.id !== insightId);
+    if (next.length > 0) {
+      optionInsightState.pinned.set(questionId, next);
+    } else {
+      optionInsightState.pinned.delete(questionId);
+    }
+  }
+
+  function updatePinnedInsightOptionText(questionId, optionKey, optionText) {
+    const existing = optionInsightState.pinned.get(questionId) || [];
+    existing.forEach((insight) => {
+      if (insight.optionKey === optionKey) {
+        insight.optionText = optionText;
+      }
+    });
+  }
+
+  function pruneQuestionOptionInsights(questionId) {
+    const validKeys = new Set(getOptionKeys(questionId));
+    const existing = optionInsightState.pinned.get(questionId) || [];
+    const next = existing.filter((insight) => validKeys.has(insight.optionKey));
+    if (next.length > 0) {
+      optionInsightState.pinned.set(questionId, next);
+    } else {
+      optionInsightState.pinned.delete(questionId);
+    }
+
+    const active = optionInsightState.active;
+    if (!active || active.questionId !== questionId || validKeys.has(active.optionKey)) {
+      return;
+    }
+    if (active.abortController) {
+      active.abortController.abort();
+    }
+    optionInsightState.active = null;
+  }
+
+  function closeOptionInsightPanel(questionId, optionKey) {
+    const active = optionInsightState.active;
+    if (!active) return;
+    if (questionId && active.questionId !== questionId) return;
+    if (optionKey && active.optionKey !== optionKey) return;
+    if (active.abortController) {
+      active.abortController.abort();
+    }
+    optionInsightState.active = null;
+  }
+
+  function openOptionInsightPanel(question, optionKey) {
+    if (!questionCanAskAboutOption(question)) return;
+    const currentValue = getQuestionValue(question);
+    const active = getActiveInsight(question.id, optionKey);
+    if (active) {
+      closeOptionInsightPanel(question.id, optionKey);
+      replaceQuestionOptionList(question, currentValue, optionKey);
+      return;
+    }
+
+    const previousActive = optionInsightState.active;
+    if (previousActive?.abortController) {
+      previousActive.abortController.abort();
+    }
+    if (previousActive && (previousActive.questionId !== question.id || previousActive.optionKey !== optionKey)) {
+      const previousQuestion = questions.find((item) => item.id === previousActive.questionId);
+      if (previousQuestion) {
+        const previousValue = getQuestionValue(previousQuestion);
+        optionInsightState.active = null;
+        replaceQuestionOptionList(previousQuestion, previousValue, previousActive.optionKey);
+      }
+    }
+
+    optionInsightState.active = createDefaultActiveInsight(question.id, optionKey);
+    replaceQuestionOptionList(question, currentValue, optionKey, { focusComposer: true });
+  }
+
+  function getSelectedInsightModel(activeInsight) {
+    if (!activeInsight) return null;
+    return typeof activeInsight.selectedModel === "string" && activeInsight.selectedModel
+      ? activeInsight.selectedModel
+      : defaultAskModel;
+  }
+
+  function getInsightModelLabel(activeInsight) {
+    const selectedModel = getSelectedInsightModel(activeInsight);
+    if (!selectedModel) return "No model selected";
+    const parsed = parseModelValue(selectedModel);
+    return `${providerLabel(parsed.provider)} / ${parsed.model}`;
+  }
+
+  function applyQuestionValue(question, value) {
+    populateForm({ [question.id]: value }, { preserveChoiceNotes: true });
+    if (question.type === "multi") {
+      updateDoneState(question.id);
+    }
+  }
+
+  function replaceQuestionOptionList(question, preserveValue, focusOptionKey, options = {}) {
+    const card = containerEl.querySelector(`.question-card[data-question-id="${escapeSelector(question.id)}"]`);
+    const currentList = card?.querySelector('.option-list');
+    const title = card?.querySelector('.question-title');
+    if (!card || !currentList || !title) return;
+
+    const nextList = createChoiceQuestionList(question, title, options);
+    currentList.replaceWith(nextList);
+    applyQuestionValue(question, preserveValue);
+
+    if (nav.cards[nav.questionIndex] === card && !nav.inSubmitArea && focusOptionKey) {
+      const optionIndex = getOptionIndexByKey(question.id, focusOptionKey);
+      if (optionIndex >= 0) {
+        nav.optionIndex = optionIndex;
+        highlightOption(card, optionIndex, false);
+      }
+    }
+
+    if (options.focusComposer) {
+      requestAnimationFrame(() => {
+        const composer = card.querySelector(`.option-insight-input[data-question-id="${escapeSelector(question.id)}"][data-option-key="${escapeSelector(focusOptionKey || "")}"]`);
+        composer?.focus();
+      });
+    }
+  }
+
+  async function runOptionAction(question, optionKey, action, text) {
+    const preservedValue = getQuestionValue(question);
+    const previousText = getOptionTextByKey(question.id, optionKey);
+    try {
+      const response = await fetch("/option-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: sessionToken, questionId: question.id, optionKey, action, text }),
+      });
+      const result = await response.json();
+      if (!result.ok) throw new Error(result.error || "Option action failed");
+
+      if (result.question && Array.isArray(result.question.options)) {
+        question.options = result.question.options;
+        question.recommended = result.question.recommended;
+        question.conviction = result.question.conviction;
+      }
+      if (Array.isArray(result.optionKeys)) {
+        setOptionKeys(question.id, result.optionKeys);
+        pruneQuestionOptionInsights(question.id);
+      }
+
+      if (action === "replace-text") {
+        const nextText = getOptionTextByKey(question.id, optionKey);
+        updatePinnedInsightOptionText(question.id, optionKey, nextText);
+        if (optionInsightState.active && optionInsightState.active.questionId === question.id && optionInsightState.active.optionKey === optionKey && optionInsightState.active.result) {
+          optionInsightState.active.result.suggestedText = nextText;
+        }
+      }
+
+      let nextValue = preservedValue;
+      if (action === "replace-text" && text) {
+        nextValue = renameChoiceAnswerValue(question, preservedValue, previousText, text);
+      }
+
+      replaceQuestionOptionList(question, nextValue, optionKey);
+      debounceSave();
+      refreshCountdown();
+      return true;
+    } catch (err) {
+      const active = getActiveInsight(question.id, optionKey);
+      if (active) {
+        active.error = err instanceof Error ? err.message : "Option action failed";
+        replaceQuestionOptionList(question, preservedValue, optionKey);
+      }
+      return false;
+    }
+  }
+
+  async function submitOptionInsight(question, optionKey) {
+    const active = getActiveInsight(question.id, optionKey);
+    if (!active) return;
+    const prompt = active.prompt.trim();
+    if (!prompt) {
+      active.error = "Prompt is required";
+      replaceQuestionOptionList(question, getQuestionValue(question), optionKey, { focusComposer: true });
+      return;
+    }
+
+    if (active.loading) {
+      active.abortController?.abort();
+      return;
+    }
+
+    active.loading = true;
+    active.error = "";
+    active.abortController = new AbortController();
+    replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+
+    try {
+      const modelOverride = getSelectedInsightModel(active);
+      const response = await fetch("/option-insight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: sessionToken,
+          questionId: question.id,
+          optionKey,
+          prompt,
+          model: modelOverride && modelOverride !== defaultAskModel ? modelOverride : null,
+        }),
+        signal: active.abortController.signal,
+      });
+      const result = await response.json();
+      if (!result.ok) throw new Error(result.error || "Option insight failed");
+      active.result = {
+        summary: result.summary,
+        bullets: Array.isArray(result.bullets) ? result.bullets : [],
+        suggestedText: typeof result.suggestedText === "string" ? result.suggestedText : undefined,
+        modelUsed: typeof result.modelUsed === "string" ? result.modelUsed : null,
+      };
+      active.error = "";
+      const optionText = typeof result.optionText === "string" ? result.optionText : getOptionTextByKey(question.id, optionKey);
+      updatePinnedInsightOptionText(question.id, optionKey, optionText);
+      refreshCountdown();
+    } catch (err) {
+      if (!(err instanceof Error && err.name === "AbortError")) {
+        active.error = err instanceof Error ? err.message : "Option insight failed";
+      }
+    } finally {
+      if (optionInsightState.active && optionInsightState.active.questionId === question.id && optionInsightState.active.optionKey === optionKey) {
+        optionInsightState.active.loading = false;
+        optionInsightState.active.abortController = null;
+      }
+      replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+    }
+  }
+
+  function pinActiveInsight(question, optionKey) {
+    const active = getActiveInsight(question.id, optionKey);
+    if (!active || !active.result) return;
+    const optionText = getOptionTextByKey(question.id, optionKey);
+    const questionInsights = optionInsightState.pinned.get(question.id) || [];
+    questionInsights.push({
+      id: makeClientId("insight"),
+      questionId: question.id,
+      optionKey,
+      optionText,
+      prompt: active.prompt.trim(),
+      summary: active.result.summary,
+      bullets: Array.isArray(active.result.bullets) ? [...active.result.bullets] : [],
+      suggestedText: active.result.suggestedText,
+      modelUsed: active.result.modelUsed ?? null,
+      createdAt: new Date().toISOString(),
+    });
+    optionInsightState.pinned.set(question.id, questionInsights);
+    debounceSave();
+    replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+  }
+
+  function createPinnedInsightCard(question, optionKey, insight) {
+    const card = document.createElement("div");
+    card.className = "option-insight-pinned";
+
+    const head = document.createElement("div");
+    head.className = "option-insight-pinned-head";
+
+    const prompt = document.createElement("div");
+    prompt.className = "option-insight-pinned-prompt";
+    prompt.textContent = insight.prompt;
+    head.appendChild(prompt);
+
+    const unpin = document.createElement("button");
+    unpin.type = "button";
+    unpin.className = "option-insight-unpin";
+    unpin.textContent = "Unpin";
+    unpin.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removePinnedInsight(question.id, insight.id);
+      debounceSave();
+      replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+    });
+    head.appendChild(unpin);
+    card.appendChild(head);
+
+    const summary = document.createElement("p");
+    summary.className = "option-insight-summary pinned";
+    summary.textContent = insight.summary;
+    card.appendChild(summary);
+
+    if (Array.isArray(insight.bullets) && insight.bullets.length > 0) {
+      const list = document.createElement("ul");
+      list.className = "option-insight-bullets";
+      insight.bullets.forEach((bullet) => {
+        const item = document.createElement("li");
+        item.textContent = bullet;
+        list.appendChild(item);
+      });
+      card.appendChild(list);
+    }
+
+    if (insight.suggestedText) {
+      const suggestion = document.createElement("code");
+      suggestion.className = "option-insight-suggested-text compact";
+      suggestion.textContent = insight.suggestedText;
+      card.appendChild(suggestion);
+    }
+
+    if (insight.modelUsed) {
+      const meta = document.createElement("div");
+      meta.className = "option-insight-meta";
+      meta.textContent = insight.modelUsed;
+      card.appendChild(meta);
+    }
+
+    return card;
+  }
+
+  function createOptionInsightPanel(question, optionKey) {
+    const active = getActiveInsight(question.id, optionKey);
+    if (!active) return null;
+
+    const panel = document.createElement("div");
+    panel.className = "option-insight-panel";
+    panel.dataset.optionInsightFor = optionKey;
+
+    const chips = document.createElement("div");
+    chips.className = "option-insight-chips";
+    ASK_PROMPT_CHIPS.forEach((chip) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "option-insight-chip" + (active.selectedChip === chip.key ? " active" : "");
+      btn.textContent = chip.label;
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        active.selectedChip = chip.key;
+        active.prompt = chip.prompt;
+        active.error = "";
+        replaceQuestionOptionList(question, getQuestionValue(question), optionKey, { focusComposer: true });
+      });
+      chips.appendChild(btn);
+    });
+    panel.appendChild(chips);
+
+    const input = document.createElement("textarea");
+    input.className = "option-insight-input";
+    input.rows = 2;
+    input.placeholder = "Ask why it works, where it fails, or how to rewrite it...";
+    input.dataset.questionId = question.id;
+    input.dataset.optionKey = optionKey;
+    input.value = active.prompt;
+    input.addEventListener("input", () => {
+      active.prompt = input.value;
+      active.selectedChip = null;
+      active.error = "";
+    });
+    input.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        submitOptionInsight(question, optionKey);
+      }
+    });
+    panel.appendChild(input);
+
+    const metaRow = document.createElement("div");
+    metaRow.className = "option-insight-meta-row";
+
+    const model = document.createElement("div");
+    model.className = "option-insight-model";
+    model.textContent = getInsightModelLabel(active);
+    metaRow.appendChild(model);
+
+    const advancedToggle = document.createElement("button");
+    advancedToggle.type = "button";
+    advancedToggle.className = "option-insight-advanced-toggle";
+    advancedToggle.textContent = active.advancedOpen ? "Advanced model settings ▾" : "Advanced model settings ▸";
+    advancedToggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      active.advancedOpen = !active.advancedOpen;
+      replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+    });
+    metaRow.appendChild(advancedToggle);
+
+    panel.appendChild(metaRow);
+
+    if (active.advancedOpen) {
+      const advanced = document.createElement("div");
+      advanced.className = "option-insight-advanced";
+
+      const providerSelect = document.createElement("select");
+      providerSelect.className = "option-insight-select";
+      const providers = [...new Set(askModels.map((model) => model.provider))];
+      providers.forEach((provider) => {
+        const option = document.createElement("option");
+        option.value = provider;
+        option.textContent = providerLabel(provider);
+        providerSelect.appendChild(option);
+      });
+      providerSelect.value = active.selectedProvider || providers[0] || "";
+      providerSelect.addEventListener("change", () => {
+        active.selectedProvider = providerSelect.value;
+        const providerModels = getModelsForProvider(active.selectedProvider);
+        active.selectedModel = providerModels[0]?.value || null;
+        replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+      });
+      advanced.appendChild(providerSelect);
+
+      const modelSelect = document.createElement("select");
+      modelSelect.className = "option-insight-select";
+      const providerModels = getModelsForProvider(active.selectedProvider);
+      providerModels.forEach((modelOption) => {
+        const option = document.createElement("option");
+        option.value = modelOption.value;
+        option.textContent = modelOption.label;
+        modelSelect.appendChild(option);
+      });
+      modelSelect.value = active.selectedModel || providerModels[0]?.value || "";
+      modelSelect.addEventListener("change", () => {
+        active.selectedModel = modelSelect.value;
+      });
+      advanced.appendChild(modelSelect);
+
+      panel.appendChild(advanced);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "option-insight-actions";
+
+    const askButton = document.createElement("button");
+    askButton.type = "button";
+    askButton.className = "option-insight-submit" + (active.loading ? " loading" : "");
+    askButton.textContent = active.loading ? "Cancel" : "Ask";
+    askButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      submitOptionInsight(question, optionKey);
+    });
+    actions.appendChild(askButton);
+
+    panel.appendChild(actions);
+
+    if (active.error) {
+      const error = document.createElement("div");
+      error.className = "option-insight-error";
+      error.textContent = active.error;
+      panel.appendChild(error);
+    }
+
+    if (active.result) {
+      const result = document.createElement("div");
+      result.className = "option-insight-result";
+
+      const summary = document.createElement("p");
+      summary.className = "option-insight-summary";
+      summary.textContent = active.result.summary;
+      result.appendChild(summary);
+
+      if (Array.isArray(active.result.bullets) && active.result.bullets.length > 0) {
+        const list = document.createElement("ul");
+        list.className = "option-insight-bullets";
+        active.result.bullets.forEach((bullet) => {
+          const item = document.createElement("li");
+          item.textContent = bullet;
+          list.appendChild(item);
+        });
+        result.appendChild(list);
+      }
+
+      if (active.result.suggestedText) {
+        const suggestionLabel = document.createElement("div");
+        suggestionLabel.className = "option-insight-suggestion-label";
+        suggestionLabel.textContent = "Suggested rewrite";
+        result.appendChild(suggestionLabel);
+
+        const suggestion = document.createElement("code");
+        suggestion.className = "option-insight-suggested-text";
+        suggestion.textContent = active.result.suggestedText;
+        result.appendChild(suggestion);
+      }
+
+      if (active.result.modelUsed) {
+        const meta = document.createElement("div");
+        meta.className = "option-insight-meta";
+        meta.textContent = active.result.modelUsed;
+        result.appendChild(meta);
+      }
+
+      const resultActions = document.createElement("div");
+      resultActions.className = "option-insight-result-actions";
+
+      const pinBtn = document.createElement("button");
+      pinBtn.type = "button";
+      pinBtn.className = "option-insight-secondary";
+      pinBtn.textContent = "Pin";
+      pinBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        pinActiveInsight(question, optionKey);
+      });
+      resultActions.appendChild(pinBtn);
+
+      const moveUpBtn = document.createElement("button");
+      moveUpBtn.type = "button";
+      moveUpBtn.className = "option-insight-secondary";
+      moveUpBtn.textContent = "Move up";
+      moveUpBtn.disabled = getOptionIndexByKey(question.id, optionKey) <= 0;
+      moveUpBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runOptionAction(question, optionKey, "move-up");
+      });
+      resultActions.appendChild(moveUpBtn);
+
+      if (active.result.suggestedText) {
+        const replaceBtn = document.createElement("button");
+        replaceBtn.type = "button";
+        replaceBtn.className = "option-insight-primary";
+        replaceBtn.textContent = "Use rewrite";
+        replaceBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          runOptionAction(question, optionKey, "replace-text", active.result.suggestedText);
+        });
+        resultActions.appendChild(replaceBtn);
+
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className = "option-insight-secondary";
+        addBtn.textContent = "Add rewrite as option";
+        addBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          runOptionAction(question, optionKey, "add-option", active.result.suggestedText);
+        });
+        resultActions.appendChild(addBtn);
+      }
+
+      result.appendChild(resultActions);
+      panel.appendChild(result);
+    }
+
+    return panel;
+  }
+
+  function createOptionNoteInput(question, optionLabel, isSelected) {
+    if (!questionCanClarifyOption(question) || !isSelected) return null;
+
+    const wrap = document.createElement("div");
+    wrap.className = "option-note-wrap";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "option-note-input";
+    input.placeholder = "Optional clarification...";
+    input.dataset.questionId = question.id;
+    input.dataset.optionLabel = optionLabel;
+    input.value = getChoiceNote(question.id, optionLabel);
+    input.addEventListener("input", () => {
+      setChoiceNote(question.id, optionLabel, input.value);
+      debounceSave();
+    });
+    setupEdgeNavigation(input);
+    wrap.appendChild(input);
+
+    return wrap;
+  }
+
+  function createChoiceOptionRow(question, option, optionIndex, options = {}) {
+    const optionLabel = getOptionLabel(option);
+    const optionContent = isRichOption(option) ? option.content : null;
+    const optionKey = getOptionKeys(question.id)[optionIndex] || null;
+    const generatedSet = options.generatedKeys || new Set();
+    const insightable = questionSupportsOptionInsights(question) && !!optionKey;
+    const askable = questionCanAskAboutOption(question) && !!optionKey;
+    const activeInsight = optionKey ? getActiveInsight(question.id, optionKey) : null;
+
+    const row = document.createElement("div");
+    row.className = "option-row";
+    if (generatedSet.has(optionKey)) {
+      row.classList.add("generated");
+    }
+    if (activeInsight) {
+      row.classList.add("ask-open");
+    }
+
+    const main = document.createElement("div");
+    main.className = "option-row-main";
+
+    const label = document.createElement("label");
+    label.className = "option-item";
+    if (optionContent) {
+      label.classList.add("has-code");
+    }
+    const input = document.createElement("input");
+    input.type = question.type === "single" ? "radio" : "checkbox";
+    input.name = question.id;
+    input.value = optionLabel;
+    input.id = `q-${question.id}-${optionIndex}`;
+
+    input.addEventListener("change", () => {
+      syncChoiceNotesWithSelection(question);
+      debounceSave();
+      if (question.type === "multi") {
+        updateDoneState(question.id);
+      }
+      replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
+    });
+
+    const body = document.createElement("div");
+    body.className = "option-item-body";
+
+    const text = document.createElement("span");
+    text.className = "option-item-label";
+    text.textContent = optionLabel;
+
+    const recommended = question.recommended;
+    const recommendedList = Array.isArray(recommended)
+      ? recommended
+      : recommended
+        ? [recommended]
+        : [];
+    const shouldPreselect = recommendedList.length > 0 && question.conviction !== "slight";
+
+    if (recommendedList.includes(optionLabel)) {
+      const pill = document.createElement("span");
+      pill.className = "recommended-pill";
+      pill.textContent = "Recommended";
+      text.appendChild(pill);
+      if (shouldPreselect) {
+        input.checked = true;
+      }
+    }
+
+    body.appendChild(text);
+
+    if (optionContent) {
+      const contentBlockEl = renderContentBlock(optionContent);
+      if (contentBlockEl) {
+        body.appendChild(contentBlockEl);
+      }
+    }
+
+    label.appendChild(input);
+    label.appendChild(body);
+
+    main.appendChild(label);
+    const selectedLabels = new Set(getSelectedOptionLabels(question.id));
+    const noteInput = createOptionNoteInput(question, optionLabel, input.checked || selectedLabels.has(optionLabel));
+
+    if (insightable && optionKey) {
+      if (askable) {
+        const askButton = document.createElement("button");
+        askButton.type = "button";
+        askButton.className = "option-ask-btn";
+        askButton.textContent = activeInsight ? "Hide" : "Ask";
+        askButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openOptionInsightPanel(question, optionKey);
+        });
+        main.appendChild(askButton);
+
+        const panel = createOptionInsightPanel(question, optionKey);
+        row.appendChild(main);
+        if (noteInput) row.appendChild(noteInput);
+        if (panel) row.appendChild(panel);
+      } else {
+        row.appendChild(main);
+        if (noteInput) row.appendChild(noteInput);
+      }
+
+      const pinnedInsights = getPinnedInsights(question.id, optionKey);
+      if (pinnedInsights.length > 0) {
+        const pinnedWrap = document.createElement("div");
+        pinnedWrap.className = "option-insight-pinned-list";
+        pinnedInsights.forEach((insight) => {
+          pinnedWrap.appendChild(createPinnedInsightCard(question, optionKey, insight));
+        });
+        row.appendChild(pinnedWrap);
+      }
+
+      return row;
+    }
+
+    row.appendChild(main);
+    if (noteInput) row.appendChild(noteInput);
+    return row;
+  }
+
+  function createChoiceQuestionList(question, title, options = {}) {
+    const list = document.createElement("div");
+    list.className = "option-list";
+    list.setAttribute("role", question.type === "single" ? "radiogroup" : "group");
+    list.setAttribute("aria-labelledby", title.id);
+
+    const generatedKeys = new Set(options.generatedKeys || []);
+
+    question.options.forEach((option, optionIndex) => {
+      list.appendChild(createChoiceOptionRow(question, option, optionIndex, { generatedKeys }));
+    });
+
+    const generateMoreEl = createGenerateMoreUI(question, list);
+    if (generateMoreEl) list.appendChild(generateMoreEl);
+
+    const otherLabel = document.createElement("label");
+    otherLabel.className = "option-item option-other";
+    const otherCheck = document.createElement("input");
+    otherCheck.type = question.type === "single" ? "radio" : "checkbox";
+    otherCheck.name = question.id;
+    otherCheck.value = "__other__";
+    otherCheck.id = `q-${question.id}-other`;
+    const otherInput = document.createElement("textarea");
+    otherInput.className = "other-input";
+    otherInput.placeholder = "Other...";
+    otherInput.rows = 1;
+    otherInput.dataset.questionId = question.id;
+    const autoResizeOther = () => {
+      otherInput.style.height = "auto";
+      otherInput.style.height = otherInput.scrollHeight + "px";
+    };
+    otherInput.addEventListener("input", () => {
+      autoResizeOther();
+      if (otherInput.value && !otherCheck.checked) {
+        otherCheck.checked = true;
+        if (question.type === "multi") updateDoneState(question.id);
+      }
+      debounceSave();
+    });
+    otherInput.addEventListener("focus", () => {
+      if (!otherCheck.checked) {
+        otherCheck.checked = true;
+        if (question.type === "multi") updateDoneState(question.id);
+        debounceSave();
+      }
+    });
+    otherCheck.addEventListener("change", () => {
+      debounceSave();
+      if (question.type === "multi") updateDoneState(question.id);
+      if (otherCheck.checked) otherInput.focus();
+    });
+    setupEdgeNavigation(otherInput);
+    otherLabel.appendChild(otherCheck);
+    otherLabel.appendChild(otherInput);
+    list.appendChild(otherLabel);
+
+    if (question.type === "multi") {
+      const doneItem = document.createElement("div");
+      doneItem.className = "option-item done-item disabled";
+      doneItem.setAttribute("tabindex", "0");
+      doneItem.dataset.doneFor = question.id;
+      doneItem.innerHTML = '<span class="done-check">✓</span><span>Done</span>';
+      doneItem.addEventListener("click", () => {
+        if (!doneItem.classList.contains("disabled")) {
+          nextQuestion();
+        }
+      });
+      doneItem.addEventListener("keydown", (e) => {
+        if ((e.key === "Enter" || e.key === " ") && !doneItem.classList.contains("disabled")) {
+          e.preventDefault();
+          e.stopPropagation();
+          nextQuestion();
+        }
+      });
+      list.appendChild(doneItem);
+    }
+
+    return list;
   }
 
   function renderContentBlock(block) {
@@ -1203,8 +2240,14 @@
     return items;
   }
 
+  function getTabStopsForCard(card) {
+    return Array.from(
+      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .image-path-input, .done-item')
+    );
+  }
+
   function isPathInput(el) {
-    return el && (el.classList.contains('image-path-input') || el.classList.contains('attach-inline-path') || el.classList.contains('other-input'));
+    return el && (el.classList.contains('image-path-input') || el.classList.contains('attach-inline-path') || el.classList.contains('other-input') || el.classList.contains('option-note-input'));
   }
 
   function isDropzone(el) {
@@ -1260,7 +2303,7 @@
   function highlightOption(card, optionIndex, isKeyboard = true) {
     const options = getOptionsForCard(card);
     options.forEach((opt, i) => {
-      const item = isOptionInput(opt) ? opt.closest('.option-item') : opt;
+      const item = isOptionInput(opt) ? (opt.closest('.option-row') || opt.closest('.option-item')) : opt;
       item?.classList.toggle('focused', i === optionIndex);
     });
     const current = options[optionIndex];
@@ -1272,8 +2315,31 @@
     }
   }
 
+  function focusCardTabStop(card, target, isKeyboard = true) {
+    if (!target) return;
+
+    clearOptionHighlight(card);
+
+    const row = target.closest?.('.option-row');
+    const highlightTarget = row || (isOptionInput(target) ? target.closest('.option-item') : target);
+    highlightTarget?.classList.add('focused');
+
+    const rowInput = row?.querySelector('input[type="radio"], input[type="checkbox"]');
+    const options = getOptionsForCard(card);
+    const navTarget = rowInput || target;
+    const nextIndex = options.indexOf(navTarget);
+    if (nextIndex >= 0) {
+      nav.optionIndex = nextIndex;
+    }
+
+    target.focus();
+    if (isKeyboard) {
+      card.classList.add('keyboard-nav');
+    }
+  }
+
   function clearOptionHighlight(card) {
-    card.querySelectorAll('.option-item, .done-item, .file-dropzone, .image-path-input').forEach(item => {
+    card.querySelectorAll('.option-row, .option-item, .done-item, .file-dropzone, .image-path-input').forEach(item => {
       item.classList.remove('focused');
     });
   }
@@ -1385,25 +2451,33 @@
     const options = getOptionsForCard(card);
     const textarea = card.querySelector('textarea');
     const isTextFocused = document.activeElement === textarea;
-    
+    const inAskArea = document.activeElement?.closest('.option-insight-panel, .option-ask-btn, .option-insight-pinned');
+    const inOptionNote = document.activeElement?.closest('.option-note-wrap');
+
     if (event.key === 'Tab') {
       const inAttachArea = document.activeElement?.closest('.attach-inline');
       const inGenerateArea = document.activeElement?.closest('.generate-more');
-      if (inAttachArea || inGenerateArea) return;
+      if (inAttachArea || inGenerateArea || inAskArea || inOptionNote) return;
       
-      event.preventDefault();
-      
-      if (options.length > 0) {
-        if (event.shiftKey) {
-          nav.optionIndex = (nav.optionIndex - 1 + options.length) % options.length;
-        } else {
-          nav.optionIndex = (nav.optionIndex + 1) % options.length;
-        }
-        highlightOption(card, nav.optionIndex);
+      const tabStops = getTabStopsForCard(card);
+      if (tabStops.length === 0) {
+        return;
       }
+
+      event.preventDefault();
+
+      const activeIndex = tabStops.indexOf(document.activeElement);
+      const fallbackIndex = options[nav.optionIndex] ? tabStops.indexOf(options[nav.optionIndex]) : -1;
+      const currentIndex = activeIndex >= 0 ? activeIndex : (fallbackIndex >= 0 ? fallbackIndex : 0);
+      const nextIndex = event.shiftKey
+        ? (currentIndex - 1 + tabStops.length) % tabStops.length
+        : (currentIndex + 1) % tabStops.length;
+      focusCardTabStop(card, tabStops[nextIndex]);
       return;
     }
-    
+
+    if (inAskArea || inOptionNote) return;
+
     if (event.key === 'ArrowLeft') {
       if (isTextFocused || isPathInput(document.activeElement)) {
         return;
@@ -1438,16 +2512,19 @@
       }
       
       if (event.key === 'Enter' || event.key === ' ') {
-        if (isPathInput(document.activeElement)) {
-          return;
-        }
-        if (document.activeElement?.closest('.attach-inline')) {
-          return;
-        }
-        if (document.activeElement?.closest('.generate-more')) {
-          return;
-        }
-        event.preventDefault();
+      if (isPathInput(document.activeElement)) {
+        return;
+      }
+      if (document.activeElement?.closest('.attach-inline')) {
+        return;
+      }
+      if (document.activeElement?.closest('.generate-more')) {
+        return;
+      }
+      if (document.activeElement?.closest('.option-insight-panel, .option-ask-btn')) {
+        return;
+      }
+      event.preventDefault();
         const option = options[nav.optionIndex];
         if (option) {
           if (isDoneItem(option)) {
@@ -1479,6 +2556,17 @@
               if (otherInput) otherInput.focus();
             }
           }
+        }
+        return;
+      }
+
+      if ((event.key === 'a' || event.key === 'A') && isOptionInput(document.activeElement)) {
+        event.preventDefault();
+        const focusedInput = options[nav.optionIndex];
+        const row = focusedInput?.closest('.option-row');
+        const askButton = row?.querySelector('.option-ask-btn');
+        if (askButton) {
+          askButton.click();
         }
         return;
       }
@@ -1550,7 +2638,6 @@
 
   function createGenerateMoreUI(question, list) {
     if (!data.canGenerate) return null;
-    if (question.options.some(isRichOption)) return null;
 
     const container = document.createElement("div");
     container.className = "generate-more";
@@ -1609,15 +2696,6 @@
       }, timeoutMs);
     }
 
-    function getExistingOptions() {
-      const inputs = list.querySelectorAll(
-        'input[name="' + escapeSelector(question.id) + '"]'
-      );
-      return Array.from(inputs)
-        .map((input) => input.value)
-        .filter((v) => v && v !== "__other__");
-    }
-
     async function runGenerate(btn, mode) {
       if (generating) {
         if (abortController) abortController.abort();
@@ -1634,7 +2712,7 @@
       clearStatus();
 
       abortController = new AbortController();
-      const existingOptions = getExistingOptions();
+      const currentValue = getQuestionValue(question);
 
       try {
         const response = await fetch("/generate", {
@@ -1643,7 +2721,6 @@
           body: JSON.stringify({
             token: sessionToken,
             questionId: question.id,
-            existingOptions,
             mode,
           }),
           signal: abortController.signal,
@@ -1651,8 +2728,15 @@
 
         const result = await response.json();
         if (!result.ok) throw new Error(result.error || "Generation failed");
-        if (!Array.isArray(result.options) || result.options.length === 0) {
+        if (!Array.isArray(result.options)) {
+          throw new Error("Generation returned invalid options");
+        }
+        if (mode === "review" && result.options.length === 0) {
           throw new Error("No options generated");
+        }
+        if (Array.isArray(result.optionKeys)) {
+          setOptionKeys(question.id, result.optionKeys);
+          pruneQuestionOptionInsights(question.id);
         }
 
         if (mode === "review") {
@@ -1660,16 +2744,7 @@
             throw new Error("No revised question returned");
           }
 
-          const seen = new Set();
-          const revisedOptions = result.options.filter((option) => {
-            const key = option.toLowerCase().trim();
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-          if (revisedOptions.length === 0) {
-            throw new Error("No valid options returned for review");
-          }
+          const revisedOptions = result.options;
 
           question.question = result.question.trim();
           question.options = revisedOptions;
@@ -1678,38 +2753,27 @@
           if (title) {
             title.innerHTML = renderLightMarkdown(question.question);
           }
-
-          list
-            .querySelectorAll('.option-item:not(.option-other):not(.done-item)')
-            .forEach((el) => el.remove());
-          revisedOptions.forEach((optionText, i) => {
-            const optionEl = createGeneratedOption(question, optionText, i);
-            list.insertBefore(optionEl, container);
-          });
-          if (question.type === "multi") updateDoneState(question.id);
+          const revisedLabels = new Set(revisedOptions.map((option) => getOptionLabel(option)));
+          const nextValue = preserveChoiceAnswerValue(question, currentValue, revisedLabels);
+          replaceQuestionOptionList(question, nextValue);
           debounceSave();
           showStatus(
             "Question updated and " + revisedOptions.length + " option" + (revisedOptions.length > 1 ? "s" : "") + " revised",
             2500,
           );
         } else {
-          const existingSet = new Set(existingOptions.map((o) => o.toLowerCase().trim()));
-          const seen = new Set();
-          const newOptions = result.options.filter((o) => {
-            const key = o.toLowerCase().trim();
-            if (existingSet.has(key) || seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
+          const newOptions = result.options;
 
           if (newOptions.length === 0) {
             showStatus("All generated options already exist", 3000);
           } else {
             question.options = question.options.concat(newOptions);
-            newOptions.forEach((optionText, i) => {
-              const optionEl = createGeneratedOption(question, optionText, i);
-              list.insertBefore(optionEl, container);
+            const optionKeys = getOptionKeys(question.id);
+            const generatedKeys = optionKeys.slice(-newOptions.length);
+            replaceQuestionOptionList(question, currentValue, generatedKeys[0] || null, {
+              generatedKeys,
             });
+            debounceSave();
             showStatus(
               newOptions.length + " option" + (newOptions.length > 1 ? "s" : "") + " added",
               2500,
@@ -1737,33 +2801,6 @@
     reviewBtn.addEventListener("click", () => runGenerate(reviewBtn, "review"));
 
     return container;
-  }
-
-  function createGeneratedOption(question, optionText, animIndex) {
-    const label = document.createElement("label");
-    label.className = "option-item generated";
-    label.style.animationDelay = (animIndex * 0.08) + "s";
-
-    const input = document.createElement("input");
-    input.type = question.type === "single" ? "radio" : "checkbox";
-    input.name = question.id;
-    input.value = optionText;
-    input.setAttribute("tabindex", "-1");
-
-    input.addEventListener("change", () => {
-      debounceSave();
-      if (question.type === "multi") {
-        updateDoneState(question.id);
-      }
-    });
-
-    const text = document.createElement("span");
-    text.textContent = optionText;
-
-    label.appendChild(input);
-    label.appendChild(text);
-
-    return label;
   }
 
   function createQuestionCard(question, index, badgeNumber) {
@@ -1838,135 +2875,7 @@
     }
 
     if (question.type === "single" || question.type === "multi") {
-      const list = document.createElement("div");
-      list.className = "option-list";
-      list.setAttribute("role", question.type === "single" ? "radiogroup" : "group");
-      list.setAttribute("aria-labelledby", title.id);
-
-      const recommended = question.recommended;
-      const recommendedList = Array.isArray(recommended)
-        ? recommended
-        : recommended
-          ? [recommended]
-          : [];
-      const shouldPreselect = recommendedList.length > 0 && question.conviction !== "slight";
-
-      question.options.forEach((option, optionIndex) => {
-        const optionLabel = getOptionLabel(option);
-        const optionContent = isRichOption(option) ? option.content : null;
-
-        const label = document.createElement("label");
-        label.className = "option-item";
-        if (optionContent) {
-          label.classList.add("has-code");
-        }
-
-        const input = document.createElement("input");
-        input.type = question.type === "single" ? "radio" : "checkbox";
-        input.name = question.id;
-        input.value = optionLabel;
-        input.id = `q-${question.id}-${optionIndex}`;
-
-        input.addEventListener("change", () => {
-          debounceSave();
-          if (question.type === "multi") {
-            updateDoneState(question.id);
-          }
-        });
-
-        const text = document.createElement("span");
-        text.textContent = optionLabel;
-        
-        if (recommendedList.includes(optionLabel)) {
-          const pill = document.createElement("span");
-          pill.className = "recommended-pill";
-          pill.textContent = "Recommended";
-          text.appendChild(pill);
-
-          if (shouldPreselect) {
-            input.checked = true;
-          }
-        }
-
-        label.appendChild(input);
-        label.appendChild(text);
-
-        if (optionContent) {
-          const contentBlockEl = renderContentBlock(optionContent);
-          if (contentBlockEl) {
-            label.appendChild(contentBlockEl);
-          }
-        }
-
-        list.appendChild(label);
-      });
-
-      const generateMoreEl = createGenerateMoreUI(question, list);
-      if (generateMoreEl) list.appendChild(generateMoreEl);
-
-      const otherLabel = document.createElement("label");
-      otherLabel.className = "option-item option-other";
-      const otherCheck = document.createElement("input");
-      otherCheck.type = question.type === "single" ? "radio" : "checkbox";
-      otherCheck.name = question.id;
-      otherCheck.value = "__other__";
-      otherCheck.id = `q-${question.id}-other`;
-      const otherInput = document.createElement("textarea");
-      otherInput.className = "other-input";
-      otherInput.placeholder = "Other...";
-      otherInput.rows = 1;
-      otherInput.dataset.questionId = question.id;
-      const autoResizeOther = () => {
-        otherInput.style.height = "auto";
-        otherInput.style.height = otherInput.scrollHeight + "px";
-      };
-      otherInput.addEventListener("input", () => {
-        autoResizeOther();
-        if (otherInput.value && !otherCheck.checked) {
-          otherCheck.checked = true;
-          if (question.type === "multi") updateDoneState(question.id);
-        }
-        debounceSave();
-      });
-      otherInput.addEventListener("focus", () => {
-        if (!otherCheck.checked) {
-          otherCheck.checked = true;
-          if (question.type === "multi") updateDoneState(question.id);
-          debounceSave();
-        }
-      });
-      otherCheck.addEventListener("change", () => {
-        debounceSave();
-        if (question.type === "multi") updateDoneState(question.id);
-        if (otherCheck.checked) otherInput.focus();
-      });
-      setupEdgeNavigation(otherInput);
-      otherLabel.appendChild(otherCheck);
-      otherLabel.appendChild(otherInput);
-      list.appendChild(otherLabel);
-
-      if (question.type === "multi") {
-        const doneItem = document.createElement("div");
-        doneItem.className = "option-item done-item disabled";
-        doneItem.setAttribute("tabindex", "0");
-        doneItem.dataset.doneFor = question.id;
-        doneItem.innerHTML = '<span class="done-check">✓</span><span>Done</span>';
-        doneItem.addEventListener("click", () => {
-          if (!doneItem.classList.contains("disabled")) {
-            nextQuestion();
-          }
-        });
-        doneItem.addEventListener("keydown", (e) => {
-          if ((e.key === "Enter" || e.key === " ") && !doneItem.classList.contains("disabled")) {
-            e.preventDefault();
-            e.stopPropagation();
-            nextQuestion();
-          }
-        });
-        list.appendChild(doneItem);
-      }
-
-      card.appendChild(list);
+      card.appendChild(createChoiceQuestionList(question, title));
     }
 
     if (question.type === "text") {
@@ -2196,17 +3105,7 @@
       if (files && files.length > 0) {
         const file = files[0];
         if (!file.type.startsWith("image/")) return;
-        if (question.type === "image") {
-          const input = card.querySelector('input[type="file"]');
-          if (input) {
-            const dt = new DataTransfer();
-            dt.items.add(file);
-            input.files = dt.files;
-            input.dispatchEvent(new Event("change"));
-          }
-        } else {
-          void addPastedImage(question, file);
-        }
+        void addDroppedImage(question, file);
       }
     });
 
@@ -2306,8 +3205,9 @@
         input.value = "";
         return;
       }
-    } catch (_err) {
-      setFieldError(questionId, "Failed to validate image.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to validate image.";
+      setFieldError(questionId, message);
       input.value = "";
       return;
     }
@@ -2315,37 +3215,15 @@
     manager.addFile(questionId, file);
   }
 
-  function resolveQuestionContext(target) {
-    const element = target && target.closest ? target : null;
-    let card = element ? element.closest(".question-card") : null;
-    
-    if (!card) {
-      card = document.querySelector(".question-card.active");
-    }
-    
-    if (card?.dataset?.questionId) {
-      const question = questions.find((q) => q.id === card.dataset.questionId);
-      if (question) {
-        return { question, card };
-      }
-    }
-
-    const question = questions[nav.questionIndex];
-    const fallbackCard = nav.cards[nav.questionIndex];
-    if (!question || !fallbackCard) return null;
-    return { question, card: fallbackCard };
-  }
-
   function revealAttachmentArea(questionId) {
     const attachInline = document.querySelector(
       `[data-attach-inline-for="${escapeSelector(questionId)}"]`
     );
-    if (attachInline?.classList.contains("hidden")) {
-      attachInline.classList.remove("hidden");
-    }
+    if (!attachInline?.classList.contains("hidden")) return;
+    attachInline.classList.remove("hidden");
   }
 
-  async function addPastedImage(question, file) {
+  async function addDroppedImage(question, file) {
     if (countUploadedFiles(question.id) + 1 > MAX_IMAGES) {
       setFieldError(question.id, `Only ${MAX_IMAGES} images allowed.`);
       return;
@@ -2357,59 +3235,20 @@
         setFieldError(question.id, validation.error);
         return;
       }
-    } catch (_err) {
-      setFieldError(question.id, "Failed to validate image.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to validate image.";
+      setFieldError(question.id, message);
       return;
     }
 
     setFieldError(question.id, "");
     if (question.type === "image") {
       questionImages.addFile(question.id, file);
-    } else {
-      revealAttachmentArea(question.id);
-      attachments.addFile(question.id, file);
-    }
-  }
-
-  function handlePaste(event) {
-    if (nav.inSubmitArea || session.expired) return;
-    const clipboard = event.clipboardData;
-    if (!clipboard) return;
-
-    const active = document.activeElement;
-    const isTextInput = active && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && active.type === "text"));
-    if (isTextInput && clipboard.getData("text/plain")) {
       return;
     }
 
-    const context = resolveQuestionContext(event.target);
-    if (!context) return;
-
-    const items = Array.from(clipboard.items || []);
-    const imageItem = items.find((item) => item.type && item.type.startsWith("image/"));
-    
-    if (imageItem) {
-      const file = imageItem.getAsFile();
-      if (!file) return;
-      event.preventDefault();
-      void addPastedImage(context.question, file);
-      return;
-    }
-
-    const text = clipboard.getData("text/plain")?.trim();
-    const isPathLike = text && (text.startsWith("/") || text.startsWith("~") || text.match(/^[a-zA-Z]:\\/));
-    const hasImageExtension = text && /\.(png|jpe?g|gif|webp)$/i.test(text);
-    
-    if (isPathLike && hasImageExtension) {
-      event.preventDefault();
-      const normalizedPath = normalizePath(text);
-      if (context.question.type === "image") {
-        questionImages.addPath(context.question.id, normalizedPath);
-      } else {
-        revealAttachmentArea(context.question.id);
-        attachments.addPath(context.question.id, normalizedPath);
-      }
-    }
+    revealAttachmentArea(question.id);
+    attachments.addFile(question.id, file);
   }
 
   function countUploadedFiles(excludingId) {
@@ -2433,13 +3272,24 @@
     if (question.type === "single") {
       const selected = formEl.querySelector(`input[name="${escapeSelector(id)}"]:checked`);
       if (!selected) return "";
-      if (selected.value === "__other__") return getOtherValue(id);
-      return selected.value;
+      if (selected.value === "__other__") {
+        const otherValue = getOtherValue(id).trim();
+        return otherValue ? { option: otherValue } : "";
+      }
+      const note = questionCanClarifyOption(question) ? getChoiceNote(id, selected.value) : "";
+      return note ? { option: selected.value, note } : { option: selected.value };
     }
     if (question.type === "multi") {
       return Array.from(
         formEl.querySelectorAll(`input[name="${escapeSelector(id)}"]:checked`)
-      ).map((input) => input.value === "__other__" ? getOtherValue(id) : input.value).filter(v => v);
+      ).map((input) => {
+        if (input.value === "__other__") {
+          const otherValue = getOtherValue(id).trim();
+          return otherValue ? { option: otherValue } : null;
+        }
+        const note = questionCanClarifyOption(question) ? getChoiceNote(id, input.value) : "";
+        return note ? { option: input.value, note } : { option: input.value };
+      }).filter((value) => value && value.option);
     }
     if (question.type === "text") {
       const textarea = formEl.querySelector(`textarea[data-question-id="${escapeSelector(id)}"]`);
@@ -2465,31 +3315,54 @@
   }
 
   function collectPersistedData() {
-    const data = {};
+    const answers = {};
     questions.forEach((question) => {
       if (question.type === "info" || question.type === "image") return;
-      data[question.id] = getQuestionValue(question);
+      answers[question.id] = getQuestionValue(question);
     });
-    return data;
+    return {
+      answers,
+      savedOptionInsights: serializeSavedOptionInsights(),
+    };
   }
 
-  function populateForm(saved) {
+  function getSavedSingleChoiceValue(value) {
+    return normalizeChoiceResponseValue(value);
+  }
+
+  function getSavedMultiChoiceValues(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => normalizeChoiceResponseValue(item)).filter(Boolean);
+  }
+
+  function populateForm(saved, options = {}) {
+    const { preserveChoiceNotes = false } = options;
     if (!saved) return;
     questions.forEach((question) => {
+      const hasSavedValue = Object.prototype.hasOwnProperty.call(saved, question.id);
       const value = saved[question.id];
-      if (question.type === "single" && typeof value === "string") {
+      if (question.type === "single") {
         const radios = formEl.querySelectorAll(
           `input[name="${escapeSelector(question.id)}"]`
         );
         radios.forEach((radio) => {
           radio.checked = false;
         });
-        if (value !== "") {
+        if (!preserveChoiceNotes) {
+          clearChoiceNotes(question.id);
+        }
+        if (!hasSavedValue) return;
+        const choiceValue = getSavedSingleChoiceValue(value);
+        if (!choiceValue) return;
+        if (choiceValue.option !== "") {
           const input = formEl.querySelector(
-            `input[name="${escapeSelector(question.id)}"][value="${escapeSelector(value)}"]`
+            `input[name="${escapeSelector(question.id)}"][value="${escapeSelector(choiceValue.option)}"]`
           );
           if (input) {
             input.checked = true;
+            if (questionCanClarifyOption(question) && choiceValue.note) {
+              setChoiceNote(question.id, choiceValue.option, choiceValue.note);
+            }
           } else {
             const otherCheck = formEl.querySelector(
               `input[name="${escapeSelector(question.id)}"][value="__other__"]`
@@ -2499,28 +3372,36 @@
             );
             if (otherCheck && otherInput) {
               otherCheck.checked = true;
-              otherInput.value = value;
+              otherInput.value = choiceValue.option;
               otherInput.dispatchEvent(new Event("input", { bubbles: true }));
             }
           }
         }
       }
-      if (question.type === "multi" && Array.isArray(value)) {
+      if (question.type === "multi") {
         const checkboxes = formEl.querySelectorAll(
           `input[name="${escapeSelector(question.id)}"]`
         );
         checkboxes.forEach((checkbox) => {
           checkbox.checked = false;
         });
+        if (!preserveChoiceNotes) {
+          clearChoiceNotes(question.id);
+        }
+        if (!hasSavedValue) return;
+        const choiceValues = getSavedMultiChoiceValues(value);
         let otherValue = "";
-        value.forEach((val) => {
+        choiceValues.forEach((choiceValue) => {
           const input = formEl.querySelector(
-            `input[name="${escapeSelector(question.id)}"][value="${escapeSelector(val)}"]`
+            `input[name="${escapeSelector(question.id)}"][value="${escapeSelector(choiceValue.option)}"]`
           );
           if (input) {
             input.checked = true;
-          } else if (val) {
-            otherValue = val;
+            if (questionCanClarifyOption(question) && choiceValue.note) {
+              setChoiceNote(question.id, choiceValue.option, choiceValue.note);
+            }
+          } else if (choiceValue.option) {
+            otherValue = choiceValue.option;
           }
         });
         if (otherValue) {
@@ -2556,16 +3437,29 @@
     }
   }
 
+  function rerenderChoiceQuestions() {
+    questions.forEach((question) => {
+      if (question.type !== "single" && question.type !== "multi") return;
+      replaceQuestionOptionList(question, getQuestionValue(question));
+    });
+  }
+
   function loadProgress() {
     if (!session.storageKey) return;
     let loaded = false;
     try {
       const saved = localStorage.getItem(session.storageKey);
       if (saved) {
-        populateForm(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        const answers = parsed && typeof parsed === "object" && parsed.answers && typeof parsed.answers === "object"
+          ? parsed.answers
+          : parsed;
+        populateForm(answers);
+        restoreSavedOptionInsights(parsed?.savedOptionInsights);
         questions.forEach((q) => {
           if (q.type === "multi") updateDoneState(q.id);
         });
+        rerenderChoiceQuestions();
         loaded = true;
       }
     } catch (_err) {
@@ -2668,6 +3562,12 @@
         updateDoneState(q.id);
       }
     });
+    rerenderChoiceQuestions();
+  }
+
+  function populateFromSavedOptionInsights(savedOptionInsights) {
+    restoreSavedOptionInsights(savedOptionInsights);
+    rerenderChoiceQuestions();
   }
 
   function readFileBase64(file) {
@@ -2735,6 +3635,7 @@
           token: sessionToken,
           responses: payload.responses,
           images: payload.images,
+          savedOptionInsights: serializeSavedOptionInsights(),
           submitted,
         }),
       });
@@ -2840,6 +3741,7 @@
   function init() {
     initTheme();
     clearReloadIntent();
+    normalizeOptionKeysFromData();
 
     const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
     const modKey = document.querySelector(".mod-key");
@@ -2874,6 +3776,9 @@
     // Pre-populate: savedAnswers takes precedence over localStorage
     if (data.savedAnswers && Array.isArray(data.savedAnswers)) {
       populateFromSavedAnswers(data.savedAnswers);
+      if (Array.isArray(data.savedOptionInsights)) {
+        populateFromSavedOptionInsights(data.savedOptionInsights);
+      }
       initStorageKeyOnly();
     } else {
       initStorage();
@@ -2978,8 +3883,6 @@
         }
       }
     }, true);
-    document.addEventListener("paste", handlePaste);
-
     if (timeout > 0) {
       startCountdownDisplay();
       timers.expiration = setTimeout(() => {

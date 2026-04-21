@@ -27,7 +27,7 @@ Restart pi to load the extension.
 - **Pre-selection**: Recommended options show a "Recommended" badge and are pre-checked on load
 - **Conviction & Weight**: Control recommendation strength (`conviction`) and visual prominence (`weight`)
 - **"Other" Option**: Single/multi select questions support custom text input
-- **Per-Question Attachments**: Attach images to any question via button, paste, or drag & drop
+- **Per-Question Attachments**: Attach images to any question via button or drag & drop
 - **Keyboard Navigation**: Full keyboard support with arrow keys, Tab, Enter
 - **Auto-save**: Responses saved to localStorage, restored on reload
 - **Session Timeout**: Configurable timeout with countdown badge, refreshes on activity
@@ -36,9 +36,11 @@ Restart pi to load the extension.
 - **Session Recovery**: Abandoned/timed-out interviews save questions for later retry
 - **Save Snapshots**: Save interview state to HTML for later review or revival
 - **Session Status Bar**: Shows project path, git branch, and session ID for identification
-- **Image Support**: Drag & drop anywhere on question, file picker, paste image or path
+- **Image Support**: Drag & drop anywhere on question, file picker, or paste a path into the dedicated path field
 - **Path Normalization**: Handles shell-escaped paths (`\ `) and macOS screenshot filenames (narrow no-break space before AM/PM)
-- **Generate & Review Options**: Single/multi-select questions show "✦ Generate more" (appends new choices) and "↻ Review options" (reviews options and rewrites the question for clarity) buttons powered by an LLM
+- **Generate & Review Options**: Single/multi-select questions, including rich-option questions with inline content blocks, show "✦ Generate more" (appends new choices) and "↻ Review options" (reviews options and rewrites the question for clarity) buttons powered by an LLM
+- **Ask About an Option**: Single/multi options, including rich options with inline content blocks, can open an inline assistant panel with prompt chips, freeform follow-up questions, provider/model overrides under Advanced, and actions like pinning analysis or applying a suggested rewrite
+- **Option Clarifications**: Plain string single/multi options can reveal a separate inline `Optional clarification...` field when selected, letting users attach a short note to a choice without using `Ask`
 - **Tool Discoverability (pi v0.59+)**: Registers a `promptSnippet` so `interview` remains eligible for inclusion in pi's default `Available tools` prompt section
 - **Themes**: Built-in default + optional light/dark + custom theme CSS
 
