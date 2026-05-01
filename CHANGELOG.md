@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-05-01
+
+### Changed
+- Ask results are now saved automatically, so the inline Ask panel no longer shows separate `Pin`, `Move up`, `Use rewrite`, or `Add rewrite as option` actions.
+- Question-to-question keyboard navigation now uses `Cmd+Left` and `Cmd+Right` instead of bare left/right arrows, leaving plain arrows available for text selection and caret movement.
+
+### Fixed
+- Option rows now allow normal text selection and copying without toggling the radio/checkbox, and focused text inputs now paste text explicitly without being intercepted by image clipboard handling.
+
 ## [0.8.6] - 2026-04-22
 
 ### Fixed

@@ -28,7 +28,7 @@ Restart pi to load the extension.
 - **Conviction & Weight**: Control recommendation strength (`conviction`) and visual prominence (`weight`)
 - **"Other" Option**: Single/multi select questions support custom text input
 - **Per-Question Attachments**: Attach images to any question via button or drag & drop
-- **Keyboard Navigation**: Full keyboard support with arrow keys, Tab, Enter
+- **Keyboard Navigation**: Full keyboard support with `⌘+←`/`⌘+→` (`Ctrl` off macOS), arrow keys, Tab, Enter
 - **Auto-save**: Responses saved to localStorage, restored on reload
 - **Session Timeout**: Configurable timeout with countdown badge, refreshes on activity
 - **Multi-Agent Support**: Queue detection prevents focus stealing when multiple agents run interviews
@@ -39,7 +39,7 @@ Restart pi to load the extension.
 - **Image Support**: Drag & drop anywhere on question, file picker, or paste a path into the dedicated path field
 - **Path Normalization**: Handles shell-escaped paths (`\ `) and macOS screenshot filenames (narrow no-break space before AM/PM)
 - **Generate & Review Options**: Single/multi-select questions, including rich-option questions with inline content blocks, show "✦ Generate more" (appends new choices) and "↻ Review options" (reviews options and rewrites the question for clarity) buttons powered by an LLM
-- **Ask About an Option**: Single/multi options, including rich options with inline content blocks, can open an inline assistant panel with prompt chips, freeform follow-up questions, provider/model overrides under Advanced, and actions like pinning analysis or applying a suggested rewrite
+- **Ask About an Option**: Single/multi options, including rich options with inline content blocks, can open an inline assistant panel with prompt chips, freeform follow-up questions, provider/model overrides under Advanced, and auto-saved option analysis
 - **Option Clarifications**: Single/multi options, including rich options with inline content blocks, can reveal a separate inline `Optional clarification...` field when selected, letting users attach a short note to a choice without using `Ask`
 - **Tool Discoverability (pi v0.59+)**: Registers a `promptSnippet` so `interview` remains eligible for inclusion in pi's default `Available tools` prompt section
 - **Themes**: Built-in default + optional light/dark + custom theme CSS
@@ -287,10 +287,10 @@ All media types support `position`: `"above"` (default), `"below"`, or `"side"` 
 | Key | Action |
 |-----|--------|
 | `↑` `↓` | Navigate options |
-| `←` `→` | Navigate between questions |
+| `⌘+←` `⌘+→` | Navigate between questions (`Ctrl` off macOS) |
 | `Tab` | Cycle through options |
 | `Enter` / `Space` | Select option |
-| `⌘+V` | Paste image or file path |
+| `⌘+V` | Paste text in the focused input |
 | `⌘+Enter` | Submit form |
 | `Esc` | Show exit overlay (press twice to quit) |
 | `⌘+Shift+L` | Toggle theme (if enabled; appears in shortcuts bar) |

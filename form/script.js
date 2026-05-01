@@ -568,25 +568,6 @@
     return note ? { option, note } : { option };
   }
 
-  function renameChoiceAnswerValue(question, value, previousOption, nextOption) {
-    if (!nextOption || (question.type !== "single" && question.type !== "multi")) {
-      return value;
-    }
-
-    if (question.type === "single") {
-      const choiceValue = normalizeChoiceResponseValue(value);
-      if (!choiceValue || choiceValue.option !== previousOption) return value;
-      return choiceValue.note ? { option: nextOption, note: choiceValue.note } : { option: nextOption };
-    }
-
-    if (!Array.isArray(value)) return value;
-    return value.map((item) => {
-      const choiceValue = normalizeChoiceResponseValue(item);
-      if (!choiceValue || choiceValue.option !== previousOption) return item;
-      return choiceValue.note ? { option: nextOption, note: choiceValue.note } : { option: nextOption };
-    });
-  }
-
   function preserveChoiceAnswerValue(question, value, validLabels) {
     if (question.type === "single") {
       const choiceValue = normalizeChoiceResponseValue(value);
@@ -775,6 +756,7 @@
       selectedProvider: parsed.provider || getFirstProvider(),
       selectedModel,
       selectedDepth: "standard",
+      savedInsightId: null,
       abortController: null,
     };
   }
@@ -846,15 +828,6 @@
     } else {
       optionInsightState.pinned.delete(questionId);
     }
-  }
-
-  function updatePinnedInsightOptionText(questionId, optionKey, optionText) {
-    const existing = optionInsightState.pinned.get(questionId) || [];
-    existing.forEach((insight) => {
-      if (insight.optionKey === optionKey) {
-        insight.optionText = optionText;
-      }
-    });
   }
 
   function pruneQuestionOptionInsights(questionId) {
@@ -962,55 +935,6 @@
     }
   }
 
-  async function runOptionAction(question, optionKey, action, text) {
-    const preservedValue = getQuestionValue(question);
-    const previousText = getOptionTextByKey(question.id, optionKey);
-    try {
-      const response = await fetch("/option-action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: sessionToken, questionId: question.id, optionKey, action, text }),
-      });
-      const result = await response.json();
-      if (!result.ok) throw new Error(result.error || "Option action failed");
-
-      if (result.question && Array.isArray(result.question.options)) {
-        question.options = result.question.options;
-        question.recommended = result.question.recommended;
-        question.conviction = result.question.conviction;
-      }
-      if (Array.isArray(result.optionKeys)) {
-        setOptionKeys(question.id, result.optionKeys);
-        pruneQuestionOptionInsights(question.id);
-      }
-
-      if (action === "replace-text") {
-        const nextText = getOptionTextByKey(question.id, optionKey);
-        updatePinnedInsightOptionText(question.id, optionKey, nextText);
-        if (optionInsightState.active && optionInsightState.active.questionId === question.id && optionInsightState.active.optionKey === optionKey && optionInsightState.active.result) {
-          optionInsightState.active.result.suggestedText = nextText;
-        }
-      }
-
-      let nextValue = preservedValue;
-      if (action === "replace-text" && text) {
-        nextValue = renameChoiceAnswerValue(question, preservedValue, previousText, text);
-      }
-
-      replaceQuestionOptionList(question, nextValue, optionKey);
-      debounceSave();
-      refreshCountdown();
-      return true;
-    } catch (err) {
-      const active = getActiveInsight(question.id, optionKey);
-      if (active) {
-        active.error = err instanceof Error ? err.message : "Option action failed";
-        replaceQuestionOptionList(question, preservedValue, optionKey);
-      }
-      return false;
-    }
-  }
-
   async function submitOptionInsight(question, optionKey) {
     const active = getActiveInsight(question.id, optionKey);
     if (!active) return;
@@ -1028,6 +952,8 @@
 
     active.loading = true;
     active.error = "";
+    active.result = null;
+    active.savedInsightId = null;
     active.abortController = new AbortController();
     replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
 
@@ -1056,7 +982,7 @@
       };
       active.error = "";
       const optionText = typeof result.optionText === "string" ? result.optionText : getOptionTextByKey(question.id, optionKey);
-      updatePinnedInsightOptionText(question.id, optionKey, optionText);
+      saveActiveInsight(question, optionKey, optionText);
       refreshCountdown();
     } catch (err) {
       if (!(err instanceof Error && err.name === "AbortError")) {
@@ -1071,13 +997,13 @@
     }
   }
 
-  function pinActiveInsight(question, optionKey) {
+  function saveActiveInsight(question, optionKey, optionText) {
     const active = getActiveInsight(question.id, optionKey);
     if (!active || !active.result) return;
-    const optionText = getOptionTextByKey(question.id, optionKey);
+    const insightId = active.savedInsightId || makeClientId("insight");
     const questionInsights = optionInsightState.pinned.get(question.id) || [];
-    questionInsights.push({
-      id: makeClientId("insight"),
+    const nextInsight = {
+      id: insightId,
       questionId: question.id,
       optionKey,
       optionText,
@@ -1087,10 +1013,16 @@
       suggestedText: active.result.suggestedText,
       modelUsed: active.result.modelUsed ?? null,
       createdAt: new Date().toISOString(),
-    });
+    };
+    const existingIndex = questionInsights.findIndex((insight) => insight.id === insightId);
+    if (existingIndex === -1) {
+      questionInsights.push(nextInsight);
+    } else {
+      questionInsights[existingIndex] = nextInsight;
+    }
+    active.savedInsightId = insightId;
     optionInsightState.pinned.set(question.id, questionInsights);
     debounceSave();
-    replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
   }
 
   function createPinnedInsightCard(question, optionKey, insight) {
@@ -1105,18 +1037,18 @@
     prompt.textContent = insight.prompt;
     head.appendChild(prompt);
 
-    const unpin = document.createElement("button");
-    unpin.type = "button";
-    unpin.className = "option-insight-unpin";
-    unpin.textContent = "Unpin";
-    unpin.addEventListener("click", (event) => {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "option-insight-remove";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       removePinnedInsight(question.id, insight.id);
       debounceSave();
       replaceQuestionOptionList(question, getQuestionValue(question), optionKey);
     });
-    head.appendChild(unpin);
+    head.appendChild(remove);
     card.appendChild(head);
 
     const summary = document.createElement("p");
@@ -1367,57 +1299,6 @@
         result.appendChild(meta);
       }
 
-      const resultActions = document.createElement("div");
-      resultActions.className = "option-insight-result-actions";
-
-      const pinBtn = document.createElement("button");
-      pinBtn.type = "button";
-      pinBtn.className = "option-insight-secondary";
-      pinBtn.textContent = "Pin";
-      pinBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        pinActiveInsight(question, optionKey);
-      });
-      resultActions.appendChild(pinBtn);
-
-      const moveUpBtn = document.createElement("button");
-      moveUpBtn.type = "button";
-      moveUpBtn.className = "option-insight-secondary";
-      moveUpBtn.textContent = "Move up";
-      moveUpBtn.disabled = getOptionIndexByKey(question.id, optionKey) <= 0;
-      moveUpBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        runOptionAction(question, optionKey, "move-up");
-      });
-      resultActions.appendChild(moveUpBtn);
-
-      if (active.result.suggestedText) {
-        const replaceBtn = document.createElement("button");
-        replaceBtn.type = "button";
-        replaceBtn.className = "option-insight-primary";
-        replaceBtn.textContent = "Use rewrite";
-        replaceBtn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          runOptionAction(question, optionKey, "replace-text", active.result.suggestedText);
-        });
-        resultActions.appendChild(replaceBtn);
-
-        const addBtn = document.createElement("button");
-        addBtn.type = "button";
-        addBtn.className = "option-insight-secondary";
-        addBtn.textContent = "Add rewrite as option";
-        addBtn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          runOptionAction(question, optionKey, "add-option", active.result.suggestedText);
-        });
-        resultActions.appendChild(addBtn);
-      }
-
-      result.appendChild(resultActions);
       panel.appendChild(result);
     }
 
@@ -1441,7 +1322,6 @@
       setChoiceNote(question.id, optionLabel, input.value);
       debounceSave();
     });
-    setupEdgeNavigation(input);
     wrap.appendChild(input);
 
     return wrap;
@@ -1468,10 +1348,10 @@
     const main = document.createElement("div");
     main.className = "option-row-main";
 
-    const label = document.createElement("label");
-    label.className = "option-item";
+    const item = document.createElement("div");
+    item.className = "option-item";
     if (optionContent) {
-      label.classList.add("has-code");
+      item.classList.add("has-code");
     }
     const input = document.createElement("input");
     input.type = question.type === "single" ? "radio" : "checkbox";
@@ -1492,7 +1372,9 @@
 
     const text = document.createElement("span");
     text.className = "option-item-label";
+    text.id = `${input.id}-label`;
     text.textContent = optionLabel;
+    input.setAttribute("aria-labelledby", text.id);
 
     const recommendedList = resolveRecommendedLabels(question.recommended, question.options || []);
     const shouldPreselect = recommendedList.length > 0 && question.conviction !== "slight";
@@ -1516,10 +1398,19 @@
       }
     }
 
-    label.appendChild(input);
-    label.appendChild(body);
+    item.appendChild(input);
+    item.appendChild(body);
+    item.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target === input || event.target.closest("button, input, textarea, select, a")) return;
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed && item.contains(selection.anchorNode) && item.contains(selection.focusNode)) {
+        return;
+      }
+      input.click();
+    });
 
-    main.appendChild(label);
+    main.appendChild(item);
     const selectedLabels = new Set(getSelectedOptionLabels(question.id));
     const noteInput = createOptionNoteInput(question, optionLabel, input.checked || selectedLabels.has(optionLabel));
 
@@ -1545,7 +1436,8 @@
         if (noteInput) row.appendChild(noteInput);
       }
 
-      const pinnedInsights = getPinnedInsights(question.id, optionKey);
+      const pinnedInsights = getPinnedInsights(question.id, optionKey)
+        .filter((insight) => insight.id !== activeInsight?.savedInsightId);
       if (pinnedInsights.length > 0) {
         const pinnedWrap = document.createElement("div");
         pinnedWrap.className = "option-insight-pinned-list";
@@ -1614,7 +1506,6 @@
       if (question.type === "multi") updateDoneState(question.id);
       if (otherCheck.checked) otherInput.focus();
     });
-    setupEdgeNavigation(otherInput);
     otherLabel.appendChild(otherCheck);
     otherLabel.appendChild(otherInput);
     list.appendChild(otherLabel);
@@ -1911,6 +1802,37 @@
   function isPrintableKey(event) {
     if (event.metaKey || event.ctrlKey || event.altKey) return false;
     return event.key.length === 1;
+  }
+
+  function isQuestionNavShortcut(event, direction) {
+    const key = direction === "prev" ? "ArrowLeft" : "ArrowRight";
+    const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+    const modPressed = isMac ? event.metaKey : event.ctrlKey;
+    const otherModPressed = isMac ? event.ctrlKey : event.metaKey;
+    return event.key === key && modPressed && !otherModPressed && !event.altKey && !event.shiftKey;
+  }
+
+  function isEditableTextControl(element) {
+    if (element instanceof HTMLTextAreaElement) return true;
+    if (!(element instanceof HTMLInputElement)) return false;
+    return ["password", "search", "tel", "text", "url"].includes(element.type);
+  }
+
+  function handlePaste(event) {
+    const active = document.activeElement;
+    if (!isEditableTextControl(active)) return;
+
+    const text = event.clipboardData?.getData("text/plain");
+    if (typeof text !== "string" || text.length === 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const start = active.selectionStart ?? active.value.length;
+    const end = active.selectionEnd ?? start;
+    active.setRangeText(text, start, end, "end");
+    active.dispatchEvent(new Event("input", { bubbles: true }));
+    refreshCountdown();
+    debounceSave();
   }
 
   function maybeStartOtherInput(event) {
@@ -2345,21 +2267,6 @@
     });
   }
 
-  function setupEdgeNavigation(element) {
-    element.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" && element.selectionStart === element.value.length) {
-        e.preventDefault();
-        e.stopPropagation();
-        nextQuestion();
-      }
-      if (e.key === "ArrowLeft" && element.selectionStart === 0) {
-        e.preventDefault();
-        e.stopPropagation();
-        prevQuestion();
-      }
-    });
-  }
-
   function highlightOption(card, optionIndex, isKeyboard = true) {
     const options = getOptionsForCard(card);
     options.forEach((opt, i) => {
@@ -2538,19 +2445,15 @@
 
     if (inAskArea || inOptionNote) return;
 
-    if (event.key === 'ArrowLeft') {
-      if (isTextFocused || isPathInput(document.activeElement)) {
-        return;
-      }
+    if (isQuestionNavShortcut(event, "prev")) {
+      if (isEditableTextControl(document.activeElement)) return;
       event.preventDefault();
       prevQuestion();
       return;
     }
-    
-    if (event.key === 'ArrowRight') {
-      if (isTextFocused || isPathInput(document.activeElement)) {
-        return;
-      }
+
+    if (isQuestionNavShortcut(event, "next")) {
+      if (isEditableTextControl(document.activeElement)) return;
       event.preventDefault();
       nextQuestion();
       return;
@@ -2685,6 +2588,7 @@
       input.setAttribute('tabindex', '-1');
     });
     
+    document.addEventListener("paste", handlePaste, true);
     document.addEventListener('keydown', handleQuestionKeydown);
     
     if (nav.cards.length > 0) {
@@ -2944,7 +2848,6 @@
       textarea.addEventListener("input", () => {
         debounceSave();
       });
-      setupEdgeNavigation(textarea);
       card.appendChild(textarea);
     }
 
@@ -2995,7 +2898,6 @@
           pathInput.value = "";
         }
       });
-      setupEdgeNavigation(pathInput);
       
       const selectedItems = document.createElement("div");
       selectedItems.className = "image-selected-items";
@@ -3015,12 +2917,12 @@
             input.click();
           }
         }
-        if (e.key === "ArrowRight") {
+        if (isQuestionNavShortcut(e, "next")) {
           e.preventDefault();
           e.stopPropagation();
           nextQuestion();
         }
-        if (e.key === "ArrowLeft") {
+        if (isQuestionNavShortcut(e, "prev")) {
           e.preventDefault();
           e.stopPropagation();
           prevQuestion();
@@ -3131,7 +3033,6 @@
           attachBtn.focus();
         }
       });
-      setupEdgeNavigation(attachPath);
       
       attachInline.appendChild(attachFileInput);
       attachInline.appendChild(attachDrop);
@@ -3805,10 +3706,9 @@
     normalizeOptionKeysFromData();
 
     const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-    const modKey = document.querySelector(".mod-key");
-    if (modKey) {
+    document.querySelectorAll(".mod-key").forEach((modKey) => {
       modKey.textContent = isMac ? "⌘" : "Ctrl";
-    }
+    });
     
     setText(titleEl, data.title || "Interview");
     setText(descriptionEl, data.description || "");
@@ -3902,7 +3802,7 @@
       true
     );
     submitBtn.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      if (isQuestionNavShortcut(e, "prev") || e.key === "ArrowUp") {
         e.preventDefault();
         e.stopImmediatePropagation();
         focusQuestion(nav.cards.length - 1, 'prev');

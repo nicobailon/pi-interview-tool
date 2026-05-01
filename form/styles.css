@@ -232,7 +232,8 @@ body {
   border-radius: 8px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-muted);
-  cursor: pointer;
+  cursor: default;
+  user-select: text;
   font-family: var(--font-body);
   font-size: var(--font-size-option);
   transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
@@ -244,6 +245,14 @@ body {
   min-width: 0;
   display: grid;
   gap: 10px;
+  cursor: text;
+  user-select: text;
+}
+
+.option-item input[type="radio"],
+.option-item input[type="checkbox"] {
+  cursor: pointer;
+  user-select: none;
 }
 
 .option-item-label {
@@ -253,6 +262,8 @@ body {
   min-height: 20px;
   min-width: 0;
   flex-wrap: wrap;
+  cursor: text;
+  user-select: text;
 }
 
 .option-item:hover {
@@ -2063,11 +2074,9 @@ button {
 }
 
 .option-insight-chip,
-.option-insight-secondary,
-.option-insight-primary,
 .option-insight-submit,
 .option-insight-advanced-toggle,
-.option-insight-unpin {
+.option-insight-remove {
   border: 1px solid var(--border-muted);
   border-radius: 999px;
   background: transparent;
@@ -2078,15 +2087,12 @@ button {
 }
 
 .option-insight-chip,
-.option-insight-secondary,
-.option-insight-primary,
 .option-insight-submit,
-.option-insight-unpin {
+.option-insight-remove {
   padding: 6px 10px;
 }
 
 .option-insight-chip.active,
-.option-insight-primary,
 .option-insight-submit {
   border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 55%, transparent);
   color: var(--card-accent, var(--accent));
@@ -2227,8 +2233,7 @@ button {
   50% { opacity: 1; }
 }
 
-.option-insight-actions,
-.option-insight-result-actions {
+.option-insight-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -2314,7 +2319,7 @@ button {
   font-family: var(--font-mono);
 }
 
-.option-insight-unpin {
+.option-insight-remove {
   padding: 4px 8px;
 }
 
@@ -2337,8 +2342,7 @@ button {
   }
 
   .option-insight-meta-row,
-  .option-insight-actions,
-  .option-insight-result-actions {
+  .option-insight-actions {
     align-items: flex-start;
     flex-direction: column;
   }

@@ -417,9 +417,12 @@ describe("content rendering styles", () => {
 		expect(serverSource).toContain("const markdownPreview = isMarkdownLang(content.lang) && content.showSource !== true;");
 	});
 
-	it("includes the option-body alignment and clarification input styles", () => {
+	it("includes the option-body alignment, selection, and clarification input styles", () => {
 		const styles = readFileSync("form/styles.css", "utf-8");
 		expect(styles).toMatch(/\.option-item-label \{[^}]*align-items: center;/s);
+		expect(styles).toMatch(/\.option-item \{[^}]*user-select: text;/s);
+		expect(styles).toMatch(/\.option-item-body \{[^}]*cursor: text;[^}]*user-select: text;/s);
+		expect(styles).toMatch(/\.option-item input\[type="radio"\],\s*\.option-item input\[type="checkbox"\] \{[^}]*cursor: pointer;[^}]*user-select: none;/s);
 		expect(styles).toMatch(/input\[type="radio"\],\s*input\[type="checkbox"\] \{[^}]*margin-top: 2px;/s);
 		expect(styles).toContain(".option-note-input");
 		expect(styles).toContain("background-image: radial-gradient(circle, var(--accent) 0 45%, transparent 55%);");
@@ -427,12 +430,41 @@ describe("content rendering styles", () => {
 		expect(styles).not.toContain("input[type=\"radio\"]::before");
 	});
 
-	it("preserves structured choice answers across option rewrites and review", () => {
+	it("uses selectable option rows and Cmd-arrow question navigation", () => {
 		const clientSource = readFileSync("form/script.js", "utf-8");
-		expect(clientSource).toContain("function renameChoiceAnswerValue(question, value, previousOption, nextOption)");
-		expect(clientSource).toContain("function preserveChoiceAnswerValue(question, value, validLabels)");
-		expect(clientSource).toContain("nextValue = renameChoiceAnswerValue(question, preservedValue, previousText, text);");
+		expect(clientSource).toContain('const item = document.createElement("div");');
+		expect(clientSource).toContain('item.addEventListener("click", (event) => {');
+		expect(clientSource).toContain("window.getSelection()");
+		expect(clientSource).toContain('function isQuestionNavShortcut(event, direction)');
+		expect(clientSource).toContain('const modPressed = isMac ? event.metaKey : event.ctrlKey;');
+		expect(clientSource).toContain('return event.key === key && modPressed && !otherModPressed && !event.altKey && !event.shiftKey;');
+		expect(clientSource).not.toContain("function setupEdgeNavigation");
+	});
+
+	it("lets text clipboard data win inside focused editable controls", () => {
+		const clientSource = readFileSync("form/script.js", "utf-8");
+		expect(clientSource).toContain("function handlePaste(event)");
+		expect(clientSource).toContain("if (!isEditableTextControl(active)) return;");
+		expect(clientSource).toContain('const text = event.clipboardData?.getData("text/plain");');
+		expect(clientSource).toContain('if (typeof text !== "string" || text.length === 0) return;');
+		expect(clientSource).toContain("event.preventDefault();\n    event.stopPropagation();");
+		expect(clientSource).toContain('active.setRangeText(text, start, end, "end");');
+		expect(clientSource).toContain('active.dispatchEvent(new Event("input", { bubbles: true }));');
+		expect(clientSource).not.toContain("function insertTextAtSelection");
+		expect(clientSource).toContain('document.addEventListener("paste", handlePaste, true);');
+	});
+
+	it("keeps Ask results saved by default without extra mutation actions", () => {
+		const clientSource = readFileSync("form/script.js", "utf-8");
+		expect(clientSource).toContain("function saveActiveInsight(question, optionKey, optionText)");
+		expect(clientSource).toContain("saveActiveInsight(question, optionKey, optionText);");
 		expect(clientSource).toContain("const nextValue = preserveChoiceAnswerValue(question, currentValue, revisedLabels);");
+		expect(clientSource).not.toContain("runOptionAction");
+		expect(clientSource).not.toContain("Move up");
+		expect(clientSource).not.toContain("Use rewrite");
+		expect(clientSource).not.toContain("Add rewrite as option");
+		expect(clientSource).not.toContain('textContent = "Pin"');
+		expect(clientSource).not.toContain('textContent = "Unpin"');
 	});
 
 	it("keeps deselected clarification drafts across option rerenders", () => {
@@ -904,63 +936,6 @@ describe("rich option question flows", () => {
 			expect(response.status).toBe(200);
 			expect(result.optionText).toBe("Show nothing");
 			expect(seenOption).toMatchObject({ label: "Show nothing" });
-		} finally {
-			handle.close();
-		}
-	});
-
-	it("preserves rich option content when rewriting the label", async () => {
-		const handle = await startInterviewServer(
-			{
-				questions: {
-					title: "Rich Ask",
-					questions: [
-						{
-							id: "policy",
-							type: "single",
-							question: "Pick one",
-							options: [
-								{ label: "Show nothing", content: { source: "No suggestion is better than a misleading one.", lang: "md" } },
-							],
-						},
-					],
-				},
-				sessionToken: "rich-option-action-token",
-				sessionId: "rich-option-action-session",
-				cwd: process.cwd(),
-				timeout: 600,
-			},
-			{
-				onSubmit: () => {},
-				onCancel: () => {},
-			},
-		);
-
-		try {
-			const html = await (await fetch(handle.url)).text();
-			const inlineDataMatch = html.match(/window\.__INTERVIEW_DATA__ = (\{[\s\S]*?\});/);
-			expect(inlineDataMatch?.[1]).toBeTruthy();
-			const inlineData = JSON.parse(inlineDataMatch![1]);
-			const optionKey = inlineData.optionKeysByQuestion.policy[0];
-
-			const response = await fetch(new URL("/option-action", handle.url), {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					token: "rich-option-action-token",
-					questionId: "policy",
-					optionKey,
-					action: "replace-text",
-					text: "Hide invalid suggestions",
-				}),
-			});
-			const result = await response.json();
-
-			expect(response.status).toBe(200);
-			expect(result.question.options[0]).toEqual({
-				label: "Hide invalid suggestions",
-				content: { source: "No suggestion is better than a misleading one.", lang: "md" },
-			});
 		} finally {
 			handle.close();
 		}
