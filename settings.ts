@@ -20,6 +20,7 @@ export interface InterviewSettings {
 	snapshotDir?: string;      // Default: ~/.pi/interview-snapshots/
 	autoSaveOnSubmit?: boolean; // Default: true
 	generateModel?: string;    // e.g., "anthropic/claude-haiku-4-5"
+	glimpseFloating?: boolean; // Default: false
 }
 
 export function loadSettings(): InterviewSettings {

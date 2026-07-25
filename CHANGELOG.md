@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added the opt-in `interview.glimpseFloating` setting to keep native macOS Glimpse windows above other windows. Thanks to Ben Tang (@0xbentang, #5) for the request.
+
 ### Changed
 - Updated the extension to Pi 0.82.1 APIs, provider-backed model requests, and bundled core-package peer dependencies.
 

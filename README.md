@@ -307,6 +307,7 @@ Settings in `~/.pi/agent/settings.json`:
     "snapshotDir": "~/.pi/interview-snapshots/",
     "autoSaveOnSubmit": true,
     "generateModel": "anthropic/claude-haiku-4-5",
+    "glimpseFloating": false,
     "theme": {
       "mode": "auto",
       "name": "default",
@@ -327,6 +328,8 @@ Settings in `~/.pi/agent/settings.json`:
 **Port setting**: Set a fixed `port` (e.g., `19847`) to use a consistent port across sessions.
 
 **Generate model**: `generateModel` sets the model for the generate/review option actions (e.g., `"anthropic/claude-haiku-4-5"`). Defaults to the agent's current model, then falls back to a cheap available model. If an explicitly configured generate model fails at request time and the current session is using a different model, interview retries once with the current session model.
+
+**Glimpse window**: `glimpseFloating` keeps the native macOS Glimpse window above other windows when `true` (default: `false`). It does not affect browser fallback behavior.
 
 **Theme notes:**
 - `mode`: `dark` (default), `light`, or `auto` (follows OS unless overridden)
