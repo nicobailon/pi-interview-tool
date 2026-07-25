@@ -93,19 +93,7 @@ function formatTimeAgo(timestamp: number): string {
 	return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
 }
 
-interface BrowserExecResult {
-	stdout: string;
-	stderr: string;
-	code: number;
-	killed: boolean;
-}
-
 type DetachedLauncher = (command: string, args: string[]) => Promise<void>;
-type BrowserExec = (
-	command: string,
-	args: string[],
-	options: { timeout: number },
-) => Promise<BrowserExecResult>;
 
 const LINUX_BROWSER_EXEC_TIMEOUT_MS = 5000;
 
@@ -129,20 +117,18 @@ function describeLaunchFailure(command: string, error: unknown): string {
 	return `${command}: ${message}`;
 }
 
-function describeExecFailure(command: string, result: BrowserExecResult): string {
+function describeExecFailure(command: string, result: Awaited<ReturnType<ExtensionAPI["exec"]>>): string {
 	const status = result.killed ? `killed (exit code ${result.code})` : `exit code ${result.code}`;
 	const output = [result.stderr, result.stdout].filter(Boolean).join("\n");
 	return `${command}: ${status}${output ? `: ${output}` : ""}`;
 }
 
 export async function openLinuxUrl(
-	pi: ExtensionAPI,
+	pi: Pick<ExtensionAPI, "exec">,
 	url: string,
 	browser?: string,
-	dependencies: { launch?: DetachedLauncher; exec?: BrowserExec } = {},
+	launch: DetachedLauncher = spawnDetached,
 ): Promise<void> {
-	const launch = dependencies.launch ?? spawnDetached;
-	const exec = dependencies.exec ?? ((command, args, options) => pi.exec(command, args, options));
 	const commands: [string, string[]][] = browser
 		? [[browser, [url]]]
 		: [
@@ -163,7 +149,7 @@ export async function openLinuxUrl(
 
 	const [fallbackCommand, fallbackArgs] = commands[0];
 	try {
-		const result = await exec(fallbackCommand, fallbackArgs, { timeout: LINUX_BROWSER_EXEC_TIMEOUT_MS });
+		const result = await pi.exec(fallbackCommand, fallbackArgs, { timeout: LINUX_BROWSER_EXEC_TIMEOUT_MS });
 		if (result.code === 0 && !result.killed) return;
 		failures.push(describeExecFailure(fallbackCommand, result));
 	} catch (error) {

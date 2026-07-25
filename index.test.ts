@@ -26,18 +26,22 @@ describe("openLinuxUrl", () => {
 
 	it("tries default launchers in order before the observable fallback", async () => {
 		const launches: string[] = [];
-		let fallback: { command: string; args: string[]; timeout: number } | undefined;
+		let fallback: { command: string; args: string[]; timeout: number | undefined } | undefined;
 
-		await openLinuxUrl({} as never, url, undefined, {
-			launch: async (command, args) => {
+		await openLinuxUrl(
+			{
+				exec: async (command, args, options) => {
+					fallback = { command, args, timeout: options?.timeout };
+					return { stdout: "", stderr: "", code: 0, killed: false };
+				},
+			},
+			url,
+			undefined,
+			async (command, args) => {
 				launches.push(`${command} ${args.join(" ")}`);
 				throw new Error("not available");
 			},
-			exec: async (command, args, options) => {
-				fallback = { command, args, timeout: options.timeout };
-				return { stdout: "", stderr: "", code: 0, killed: false };
-			},
-		});
+		);
 
 		expect(launches).toEqual([
 			`xdg-open ${url}`,
@@ -51,52 +55,63 @@ describe("openLinuxUrl", () => {
 		const launches: string[] = [];
 		const execs: string[] = [];
 
-		await openLinuxUrl({} as never, url, "firefox", {
-			launch: async (command, args) => {
+		await openLinuxUrl(
+			{
+				exec: async (command, args) => {
+					execs.push(`${command} ${args.join(" ")}`);
+					return { stdout: "", stderr: "", code: 0, killed: false };
+				},
+			},
+			url,
+			"firefox",
+			async (command, args) => {
 				launches.push(`${command} ${args.join(" ")}`);
 				throw new Error("not available");
 			},
-			exec: async (command, args) => {
-				execs.push(`${command} ${args.join(" ")}`);
-				return { stdout: "", stderr: "", code: 0, killed: false };
-			},
-		});
+		);
 
 		expect(launches).toEqual([`firefox ${url}`]);
 		expect(execs).toEqual([`firefox ${url}`]);
 	});
 
 	it("uses Pi exec after asynchronous detached launch failures", async () => {
-		const launch = async () => {
-			await Promise.resolve();
-			throw new Error("ENOENT");
-		};
 		let usedFallback = false;
 
-		await openLinuxUrl({} as never, url, undefined, {
-			launch,
-			exec: async () => {
-				usedFallback = true;
-				return { stdout: "", stderr: "", code: 0, killed: false };
+		await openLinuxUrl(
+			{
+				exec: async () => {
+					usedFallback = true;
+					return { stdout: "", stderr: "", code: 0, killed: false };
+				},
 			},
-		});
+			url,
+			undefined,
+			async () => {
+				await Promise.resolve();
+				throw new Error("ENOENT");
+			},
+		);
 
 		expect(usedFallback).toBe(true);
 	});
 
 	it("aggregates launcher and killed nonzero Pi exec failures", async () => {
 		await expect(
-			openLinuxUrl({} as never, url, undefined, {
-				launch: async (command) => {
+			openLinuxUrl(
+				{
+					exec: async () => ({
+						stdout: "stdout detail",
+						stderr: "stderr detail",
+						code: 7,
+						killed: true,
+					}),
+				},
+				url,
+				undefined,
+				async (command) => {
 					throw new Error(`${command} missing`);
 				},
-				exec: async () => ({
-					stdout: "stdout detail",
-					stderr: "stderr detail",
-					code: 7,
-					killed: true,
-				}),
-			}),
+			),
 		).rejects.toThrow(
 			/xdg-open missing.*sensible-browser missing.*gio missing.*killed \(exit code 7\).*stderr detail.*stdout detail/s,
 		);
