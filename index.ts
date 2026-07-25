@@ -143,13 +143,13 @@ export async function openLinuxUrl(
 ): Promise<void> {
 	const launch = dependencies.launch ?? spawnDetached;
 	const exec = dependencies.exec ?? ((command, args, options) => pi.exec(command, args, options));
-	const commands = browser
-		? [[browser, [url]] as const]
-		: ([
+	const commands: [string, string[]][] = browser
+		? [[browser, [url]]]
+		: [
 			["xdg-open", [url]],
 			["sensible-browser", [url]],
 			["gio", ["open", url]],
-		] as const);
+		];
 	const failures: string[] = [];
 
 	for (const [command, args] of commands) {
