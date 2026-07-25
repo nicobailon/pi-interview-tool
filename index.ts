@@ -6,7 +6,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { execSync, execFileSync } from "node:child_process";
+import { execSync, execFileSync, spawn as spawnProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import {
 	startInterviewServer,
@@ -93,6 +93,86 @@ function formatTimeAgo(timestamp: number): string {
 	return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
 }
 
+interface BrowserExecResult {
+	stdout: string;
+	stderr: string;
+	code: number;
+	killed: boolean;
+}
+
+type DetachedLauncher = (command: string, args: string[]) => Promise<void>;
+type BrowserExec = (
+	command: string,
+	args: string[],
+	options: { timeout: number },
+) => Promise<BrowserExecResult>;
+
+const LINUX_BROWSER_EXEC_TIMEOUT_MS = 5000;
+
+function spawnDetached(command: string, args: string[]): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const child = spawnProcess(command, args, {
+			detached: true,
+			shell: false,
+			stdio: "ignore",
+		});
+		child.once("spawn", () => {
+			child.unref();
+			resolve();
+		});
+		child.once("error", reject);
+	});
+}
+
+function describeLaunchFailure(command: string, error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return `${command}: ${message}`;
+}
+
+function describeExecFailure(command: string, result: BrowserExecResult): string {
+	const status = result.killed ? `killed (exit code ${result.code})` : `exit code ${result.code}`;
+	const output = [result.stderr, result.stdout].filter(Boolean).join("\n");
+	return `${command}: ${status}${output ? `: ${output}` : ""}`;
+}
+
+export async function openLinuxUrl(
+	pi: ExtensionAPI,
+	url: string,
+	browser?: string,
+	dependencies: { launch?: DetachedLauncher; exec?: BrowserExec } = {},
+): Promise<void> {
+	const launch = dependencies.launch ?? spawnDetached;
+	const exec = dependencies.exec ?? ((command, args, options) => pi.exec(command, args, options));
+	const commands = browser
+		? [[browser, [url]] as const]
+		: ([
+			["xdg-open", [url]],
+			["sensible-browser", [url]],
+			["gio", ["open", url]],
+		] as const);
+	const failures: string[] = [];
+
+	for (const [command, args] of commands) {
+		try {
+			await launch(command, args);
+			return;
+		} catch (error) {
+			failures.push(describeLaunchFailure(command, error));
+		}
+	}
+
+	const [fallbackCommand, fallbackArgs] = commands[0];
+	try {
+		const result = await exec(fallbackCommand, fallbackArgs, { timeout: LINUX_BROWSER_EXEC_TIMEOUT_MS });
+		if (result.code === 0 && !result.killed) return;
+		failures.push(describeExecFailure(fallbackCommand, result));
+	} catch (error) {
+		failures.push(describeLaunchFailure(`${fallbackCommand} (pi.exec)`, error));
+	}
+
+	throw new Error(`Failed to open browser on Linux:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
+}
+
 async function openUrl(pi: ExtensionAPI, url: string, browser?: string): Promise<void> {
 	const platform = os.platform();
 	let result;
@@ -109,11 +189,8 @@ async function openUrl(pi: ExtensionAPI, url: string, browser?: string): Promise
 			result = await pi.exec("cmd", ["/c", "start", "", url]);
 		}
 	} else {
-		if (browser) {
-			result = await pi.exec(browser, [url]);
-		} else {
-			result = await pi.exec("xdg-open", [url]);
-		}
+		await openLinuxUrl(pi, url, browser);
+		return;
 	}
 	if (result.code !== 0) {
 		throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);
