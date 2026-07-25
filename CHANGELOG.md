@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-25
+
 ### Added
 - Added the opt-in `interview.glimpseFloating` setting to keep native macOS Glimpse windows above other windows. Thanks to Ben Tang (@0xbentang, #5) for the request.
 
