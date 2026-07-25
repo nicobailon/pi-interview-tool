@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Browser auto-open failures now keep the interview server available at its manual URL without emitting stale updates after cancellation. Thanks to Yoni Lerner (@yonilerner, #9) for the implementation and @borysow (#6) for the report.
+
 ## [0.8.7] - 2026-05-01
 
 ### Changed
