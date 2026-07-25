@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Updated the extension to Pi 0.82.1 APIs, provider-backed model requests, and bundled core-package peer dependencies.
+
 ### Fixed
 - Browser auto-open failures now keep the interview server available at its manual URL without emitting stale updates after cancellation. Thanks to Yoni Lerner (@yonilerner, #9) for the implementation and @borysow (#6) for the report.
 

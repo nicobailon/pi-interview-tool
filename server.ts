@@ -6,7 +6,7 @@ import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, renameSyn
 import { mkdir, writeFile, copyFile } from "node:fs/promises";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { getOptionLabel, type Question, type QuestionsFile, type MediaBlock, type OptionValue } from "./schema.js";
+import { getOptionLabel, type Question, type QuestionsFile, type MediaBlock, type OptionValue } from "./schema.ts";
 
 function getGitBranch(cwd: string): string | null {
 	try {

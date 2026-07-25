@@ -17,7 +17,7 @@ pi install npm:pi-interview
 Restart pi to load the extension.
 
 **Requirements:**
-- pi-agent v0.35.0 or later (extensions API)
+- pi v0.82.1 or later
 - For native macOS window: `pi install npm:glimpseui` (optional, falls back to browser if not installed)
 
 ## Features
