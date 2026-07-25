@@ -63,7 +63,8 @@ function escapeHtml(str: string): string {
 function openInGlimpse(
 	open: (html: string, opts: Record<string, unknown>) => GlimpseWindow,
 	url: string,
-	title?: string,
+	title: string | undefined,
+	floating: boolean,
 ): GlimpseWindow {
 	const safeTitle = escapeHtml(title || "Interview");
 	const shellHTML = `<!DOCTYPE html>
@@ -78,6 +79,7 @@ function openInGlimpse(
 		width: 800,
 		height: 700,
 		title: title || "Interview",
+		floating,
 	});
 }
 
@@ -1323,7 +1325,12 @@ export default function (pi: ExtensionAPI) {
 							const glimpseOpenFn = os.platform() === "darwin" ? await getGlimpseOpen() : null;
 							if (glimpseOpenFn) {
 								try {
-									glimpseWin = openInGlimpse(glimpseOpenFn, url, questionsData.title || "Interview");
+									glimpseWin = openInGlimpse(
+										glimpseOpenFn,
+										url,
+										questionsData.title || "Interview",
+										settings.glimpseFloating ?? false,
+									);
 									glimpseWin.on("closed", () => {
 										glimpseWin = null;
 										if (!resolved) {
