@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateQuestions, getOptionLabel, isRichOption, sanitizeLLMJSON } from "./schema.js";
+import { validateQuestions, getOptionLabel, isRichOption, sanitizeLLMJSON } from "./schema.ts";
 
 function valid(overrides: Record<string, unknown> = {}) {
 	return {

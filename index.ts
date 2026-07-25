@@ -1,7 +1,7 @@
 import { Type } from "typebox";
-import { StringEnum, complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
-import { Text } from "@mariozechner/pi-tui";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { StringEnum, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
@@ -17,9 +17,9 @@ import {
 	type SavedOptionInsight,
 	type AskModelOption,
 	type OptionInsightResult,
-} from "./server.js";
-import { getOptionLabel, isRichOption, validateQuestions, sanitizeLLMJSON, type OptionValue, type Question, type QuestionsFile } from "./schema.js";
-import { loadSettings, type InterviewThemeSettings } from "./settings.js";
+} from "./server.ts";
+import { getOptionLabel, isRichOption, validateQuestions, sanitizeLLMJSON, type OptionValue, type Question, type QuestionsFile } from "./schema.ts";
+import { loadSettings, type InterviewThemeSettings } from "./settings.ts";
 
 interface GlimpseWindow {
 	on(event: "closed", handler: () => void): void;
@@ -852,7 +852,7 @@ export default function (pi: ExtensionAPI) {
 				);
 			}
 
-			if (typeof ctx.hasQueuedMessages === "function" && ctx.hasQueuedMessages()) {
+			if (ctx.hasPendingMessages()) {
 				return {
 					content: [{ type: "text", text: "Interview skipped - user has queued input." }],
 					details: { status: "cancelled", url: "", responses: [] },
@@ -871,7 +871,7 @@ export default function (pi: ExtensionAPI) {
 					configuredGenerateModel = ctx.modelRegistry.find(
 						settings.generateModel.slice(0, slashIdx),
 						settings.generateModel.slice(slashIdx + 1),
-					);
+					) ?? null;
 				}
 			}
 
@@ -967,59 +967,63 @@ export default function (pi: ExtensionAPI) {
 				let onGenerate: InterviewServerCallbacks["onGenerate"];
 				let onOptionInsight: InterviewServerCallbacks["onOptionInsight"];
 				if (generateModel) {
+					const completePrompt = async (
+						model: Model<Api>,
+						prompt: string,
+						generateSignal: AbortSignal,
+						systemPrompt = GENERATE_OPTIONS_SYSTEM_PROMPT,
+					) => {
+						const modelRef = formatModelRef(model);
+						const provider = ctx.modelRegistry.getProvider(model.provider);
+						if (!provider) throw new Error(`Provider not found for ${modelRef}`);
+
+						const resolution = await ctx.modelRegistry.getProviderAuth(model.provider);
+						if (!resolution) throw new Error(`Provider is not configured for ${modelRef}`);
+
+						const requestModel = resolution.auth.baseUrl
+							? { ...model, baseUrl: resolution.auth.baseUrl }
+							: model;
+						let headers = resolution.auth.headers ? { ...resolution.auth.headers } : undefined;
+						for (const [name, value] of Object.entries(model.headers ?? {})) {
+							headers ??= {};
+							for (const existingName of Object.keys(headers)) {
+								if (existingName.toLowerCase() === name.toLowerCase()) delete headers[existingName];
+							}
+							headers[name] = value;
+						}
+						const response = await provider.stream(
+							requestModel,
+							createGenerateContext(prompt, systemPrompt),
+							{
+								apiKey: resolution.auth.apiKey,
+								headers,
+								env: resolution.env,
+								signal: generateSignal,
+							},
+						).result();
+
+						return extractGenerateResponseText(modelRef, response);
+					};
+
 					const generateOptions = async <T>(
 						model: Model<Api>,
 						prompt: string,
 						generateSignal: AbortSignal,
 						parse: (text: string) => T,
-					) => {
-						const modelRef = formatModelRef(model);
-						const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-						if (!auth.ok) throw new Error(`${modelRef}: ${auth.error}`);
-						if (!auth.apiKey) throw new Error(`No API key for ${modelRef}`);
-
-						const response = await complete(
-							model,
-							createGenerateContext(prompt),
-							{ apiKey: auth.apiKey, headers: auth.headers, signal: generateSignal },
-						);
-
-						return parse(extractGenerateResponseText(modelRef, response));
-					};
+					) => parse(await completePrompt(model, prompt, generateSignal));
 
 					const reviewQuestion = async <T>(
 						model: Model<Api>,
 						prompt: string,
 						generateSignal: AbortSignal,
 						parse: (text: string) => T,
-					) => {
-						const modelRef = formatModelRef(model);
-						const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-						if (!auth.ok) throw new Error(`${modelRef}: ${auth.error}`);
-						if (!auth.apiKey) throw new Error(`No API key for ${modelRef}`);
-
-						const response = await complete(
-							model,
-							createGenerateContext(prompt, REVIEW_QUESTION_SYSTEM_PROMPT),
-							{ apiKey: auth.apiKey, headers: auth.headers, signal: generateSignal },
-						);
-
-						return parse(extractGenerateResponseText(modelRef, response));
-					};
+					) => parse(await completePrompt(model, prompt, generateSignal, REVIEW_QUESTION_SYSTEM_PROMPT));
 
 					const optionInsight = async (model: Model<Api>, prompt: string, generateSignal: AbortSignal) => {
 						const modelRef = formatModelRef(model);
-						const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-						if (!auth.ok) throw new Error(`${modelRef}: ${auth.error}`);
-						if (!auth.apiKey) throw new Error(`No API key for ${modelRef}`);
-
-						const response = await complete(
-							model,
-							createGenerateContext(prompt, OPTION_INSIGHT_SYSTEM_PROMPT),
-							{ apiKey: auth.apiKey, headers: auth.headers, signal: generateSignal },
+						const parsed = parseOptionInsight(
+							await completePrompt(model, prompt, generateSignal, OPTION_INSIGHT_SYSTEM_PROMPT),
 						);
-
-						const parsed = parseOptionInsight(extractGenerateResponseText(modelRef, response));
 						return { ...parsed, modelUsed: modelRef };
 					};
 
@@ -1316,8 +1320,8 @@ export default function (pi: ExtensionAPI) {
 									content: [{ type: "text", text: queuedSummary }],
 									details: { status: "queued", url, responses: [], queuedMessage },
 								});
-							} else if (pi.hasUI) {
-								pi.ui.notify(queuedSummary, "info");
+							} else {
+								ctx.ui.notify(queuedSummary, "info");
 							}
 						} else {
 							const glimpseOpenFn = os.platform() === "darwin" ? await getGlimpseOpen() : null;
@@ -1347,8 +1351,8 @@ export default function (pi: ExtensionAPI) {
 										content: [{ type: "text", text: fallbackText }],
 										details: { status: "queued", url, responses: [], queuedMessage: fallbackText },
 									});
-								} else if (pi.hasUI) {
-									pi.ui.notify(`Open interview manually: ${url}`, "warning");
+								} else {
+									ctx.ui.notify(`Open interview manually: ${url}`, "warning");
 								}
 							}
 						}

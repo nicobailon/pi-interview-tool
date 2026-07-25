@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startInterviewServer, type ResponseItem } from "./server.js";
+import { startInterviewServer, type ResponseItem } from "./server.ts";
 import interviewExtension, {
 	buildAnsweredAgentResponseItems,
 	createGenerateContext,
@@ -17,8 +17,8 @@ import interviewExtension, {
 	parseReviewedQuestionUpdate,
 	selectGenerateModels,
 	buildAskModelsData,
-} from "./index.js";
-import { validateQuestions, type Question } from "./schema.js";
+} from "./index.ts";
+import { validateQuestions, type Question } from "./schema.ts";
 
 describe("selectGenerateModels", () => {
 	const configured = { provider: "anthropic", id: "claude-haiku-4-5" };
