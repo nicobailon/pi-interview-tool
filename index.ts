@@ -1338,6 +1338,7 @@ export default function (pi: ExtensionAPI) {
 							try {
 								await openUrl(pi, url, settings.browser);
 							} catch (err) {
+								if (resolved) return;
 								// Browser unavailable (e.g. remote/headless). Keep server alive and surface URL.
 								const message = err instanceof Error ? err.message : String(err);
 								const fallbackText = `Could not auto-open browser: ${message}\nOpen manually: ${url}`;
