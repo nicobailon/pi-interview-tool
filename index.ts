@@ -977,26 +977,22 @@ export default function (pi: ExtensionAPI) {
 						const provider = ctx.modelRegistry.getProvider(model.provider);
 						if (!provider) throw new Error(`Provider not found for ${modelRef}`);
 
-						const resolution = await ctx.modelRegistry.getProviderAuth(model.provider);
+						const [resolution, requestAuth] = await Promise.all([
+							ctx.modelRegistry.getProviderAuth(model.provider),
+							ctx.modelRegistry.getApiKeyAndHeaders(model),
+						]);
 						if (!resolution) throw new Error(`Provider is not configured for ${modelRef}`);
+						if (!requestAuth.ok) throw new Error(`${modelRef}: ${requestAuth.error}`);
 
 						const requestModel = resolution.auth.baseUrl
 							? { ...model, baseUrl: resolution.auth.baseUrl }
 							: model;
-						let headers = resolution.auth.headers ? { ...resolution.auth.headers } : undefined;
-						for (const [name, value] of Object.entries(model.headers ?? {})) {
-							headers ??= {};
-							for (const existingName of Object.keys(headers)) {
-								if (existingName.toLowerCase() === name.toLowerCase()) delete headers[existingName];
-							}
-							headers[name] = value;
-						}
 						const response = await provider.stream(
 							requestModel,
 							createGenerateContext(prompt, systemPrompt),
 							{
-								apiKey: resolution.auth.apiKey,
-								headers,
+								apiKey: requestAuth.apiKey,
+								headers: requestAuth.headers,
 								env: resolution.env,
 								signal: generateSignal,
 							},
