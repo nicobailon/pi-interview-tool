@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-30
+
 ### Changed
 - The session-timeout countdown now schedules updates at second boundaries instead of running a continuous animation-frame loop, and activity events move the expiration deadline instead of recreating timers, cutting idle renderer work by ~96%.
 
