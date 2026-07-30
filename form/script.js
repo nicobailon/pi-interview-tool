@@ -66,6 +66,7 @@
   const timers = {
     save: null,
     countdown: null,
+    countdownDisplay: null,
     expiration: null,
     heartbeat: null,
     queuePoll: null,
@@ -112,41 +113,59 @@
 
   function startCountdownDisplay() {
     if (!countdownBadge || timeout <= 0) return;
-    
+
     const expandThreshold = 120;
     const urgentThreshold = 30;
     session.countdownEndTime = Date.now() + (timeout * 1000);
-    
+
     countdownBadge.classList.remove("hidden");
     countdownBadge.classList.add("minimal");
-    
+
     if (session.tickLoopRunning) return;
     session.tickLoopRunning = true;
-    
+
     const tick = () => {
       const now = Date.now();
-      const remaining = Math.max(0, Math.ceil((session.countdownEndTime - now) / 1000));
-      
+      const millisecondsLeft = session.countdownEndTime - now;
+      const remaining = Math.max(0, Math.ceil(millisecondsLeft / 1000));
+
       updateCountdownBadge(remaining, timeout);
-      
+
       if (remaining <= expandThreshold) {
         countdownBadge.classList.remove("minimal");
       }
-      
+
       if (remaining <= urgentThreshold) {
         countdownBadge.classList.add("urgent");
       } else {
         countdownBadge.classList.remove("urgent");
       }
-      
+
       if (remaining > 0 && !session.expired) {
-        requestAnimationFrame(tick);
+        const untilNextSecond = millisecondsLeft - ((remaining - 1) * 1000);
+        timers.countdownDisplay = setTimeout(tick, Math.max(16, Math.min(1000, untilNextSecond + 1)));
       } else {
+        timers.countdownDisplay = null;
         session.tickLoopRunning = false;
       }
     };
-    
-    requestAnimationFrame(tick);
+
+    tick();
+  }
+
+  function scheduleExpirationCheck() {
+    const check = () => {
+      const remaining = session.countdownEndTime - Date.now();
+      if (remaining > 0 && !session.expired) {
+        timers.expiration = setTimeout(check, remaining);
+        return;
+      }
+      timers.expiration = null;
+      if (!session.expired) showSessionExpired();
+    };
+
+    if (timers.expiration) clearTimeout(timers.expiration);
+    timers.expiration = setTimeout(check, Math.max(0, session.countdownEndTime - Date.now()));
   }
 
   function refreshCountdown() {
@@ -154,20 +173,17 @@
     session.countdownEndTime = Date.now() + (timeout * 1000);
     countdownBadge?.classList.add("minimal");
     countdownBadge?.classList.remove("urgent");
-    
-    if (timers.expiration) {
-      clearTimeout(timers.expiration);
-    }
-    timers.expiration = setTimeout(() => {
-      showSessionExpired();
-    }, timeout * 1000);
   }
 
   function showSessionExpired() {
     if (session.expired) return;
     session.expired = true;
     session.tickLoopRunning = false;
-    
+    if (timers.countdownDisplay) {
+      clearTimeout(timers.countdownDisplay);
+      timers.countdownDisplay = null;
+    }
+
     submitBtn.disabled = true;
     countdownBadge?.classList.add("hidden");
     
@@ -3825,9 +3841,7 @@
       
       if (timeout > 0) {
         startCountdownDisplay();
-        timers.expiration = setTimeout(() => {
-          showSessionExpired();
-        }, timeout * 1000);
+        scheduleExpirationCheck();
       }
     });
 
@@ -3846,10 +3860,8 @@
     }, true);
     if (timeout > 0) {
       startCountdownDisplay();
-      timers.expiration = setTimeout(() => {
-        showSessionExpired();
-      }, timeout * 1000);
-      
+      scheduleExpirationCheck();
+
       ["click", "keydown", "input", "change"].forEach(event => {
         formEl.addEventListener(event, refreshCountdown, { passive: true });
       });

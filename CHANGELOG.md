@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- The session-timeout countdown now schedules updates at second boundaries instead of running a continuous animation-frame loop, and activity events move the expiration deadline instead of recreating timers, cutting idle renderer work by ~96%.
+
+### Fixed
+- Clicking "Stay" on the expiration warning no longer leaves the previous expiration timer armed, which could expire the session shortly after choosing to stay.
+
 ## [0.9.0] - 2026-07-25
 
 ### Added
