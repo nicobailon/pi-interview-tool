@@ -191,6 +191,18 @@ function isRemoteSession(): boolean {
 	return Boolean(process.env.SSH_CONNECTION || process.env.SSH_TTY);
 }
 
+// The env heuristic can't see a user who started pi locally (e.g. Ghostty at the desk)
+// and later drives it over ssh/Moshi: the process env stays local. An active remote
+// login in utmp (`who` shows the client address in parens) marks that ambiguous case.
+function hasActiveRemoteLogin(): boolean {
+	try {
+		const out = execFileSync("who", { encoding: "utf8", timeout: 2000 });
+		return /\(.+\)\s*$/m.test(out);
+	} catch {
+		return false;
+	}
+}
+
 // Moshi's moshi-hook daemon owns a gateway on 127.0.0.1:24543; a live connection
 // is the same authoritative check the Moshi app itself uses.
 function probeMoshiGateway(timeoutMs = 300): Promise<boolean> {
@@ -1430,7 +1442,29 @@ export default function (pi: ExtensionAPI) {
 								ctx.ui.notify(queuedSummary, "info");
 							}
 						} else {
-							// A Glimpse window opened on a remote host display is unwatched; closing it cancels the interview.
+							// remoteLikely covers both the clear case (this process runs under ssh/mosh)
+							// and the ambiguous one (process started locally, but someone is ssh'd into
+							// this host right now - possibly the same human, via Moshi).
+							const remoteLikely = isRemoteSession() || hasActiveRemoteLogin();
+							const emitHint = async (openError: string | null): Promise<void> => {
+								const hint = remoteAccessHint({
+									url,
+									port: handle.port,
+									moshi: await probeMoshiGateway(),
+									openError,
+								});
+								if (onUpdate) {
+									onUpdate({
+										content: [{ type: "text", text: hint }],
+										details: { status: "queued", url, responses: [], queuedMessage: hint },
+									});
+								} else {
+									ctx.ui.notify(hint, openError !== null ? "warning" : "info");
+								}
+							};
+							// A Glimpse window opened on a remote host display is unwatched; closing it cancels
+							// the interview. Only the process's own env skips Glimpse: in the ambiguous case the
+							// user may be at the desk, so keep the window but print the hint too.
 							const glimpseOpenFn = os.platform() === "darwin" && !isRemoteSession() ? await getGlimpseOpen() : null;
 							if (glimpseOpenFn) {
 								try {
@@ -1446,6 +1480,9 @@ export default function (pi: ExtensionAPI) {
 											finish("cancelled", [], "user");
 										}
 									});
+									if (remoteLikely) {
+										await emitHint(null);
+									}
 									return;
 								} catch {
 									glimpseWin = null;
@@ -1460,21 +1497,8 @@ export default function (pi: ExtensionAPI) {
 							}
 							// On macOS/Windows hosts open/start succeeds over ssh but opens on the host display,
 							// so remote-looking sessions also receive the hint after a successful launch.
-							if (openError !== null || isRemoteSession()) {
-								const hint = remoteAccessHint({
-									url,
-									port: handle.port,
-									moshi: await probeMoshiGateway(),
-									openError,
-								});
-								if (onUpdate) {
-									onUpdate({
-										content: [{ type: "text", text: hint }],
-										details: { status: "queued", url, responses: [], queuedMessage: hint },
-									});
-								} else {
-									ctx.ui.notify(hint, openError !== null ? "warning" : "info");
-								}
+							if (openError !== null || remoteLikely) {
+								await emitHint(openError);
 							}
 						}
 					})

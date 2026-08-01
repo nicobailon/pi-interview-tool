@@ -3,8 +3,8 @@
 ## [Unreleased]
 
 ### Added
-- One-tap access from remote and Moshi sessions: tokenless top-level navigations from loopback now redirect to the tokenized form URL, so Moshi's browser preview lands on a working form over its per-session SSH forward. Page-driven `cors`/`no-cors` fetches still get 403, so a drive-by request cannot arm the abandon watchdog.
-- When the browser launch fails or the session looks remote (`SSH_CONNECTION`/`SSH_TTY`, which also catches mosh), the tool prints the form URL with tailored hints: a Moshi preview tip (only when the moshi-hook gateway answers on `127.0.0.1:24543`), an exact `ssh -L` command with the real port, and a mosh can't-forward-ports caveat.
+- One-tap access from remote and Moshi sessions: tokenless top-level navigations from loopback now receive a 200 landing shell that hops to the tokenized form URL, so Moshi's browser preview lands on a working form over its per-session SSH forward. Page-driven `cors`/`no-cors` fetches still get 403, so a drive-by request cannot arm the abandon watchdog. `HEAD /` answers 200 (headers only) and the server prefers low ports (8377+, scanning forward on collision, ephemeral fallback) because moshi-hook's discovery ignores ephemeral-range listeners and expects 200 on `GET /`.
+- When the browser launch fails or the session looks remote (`SSH_CONNECTION`/`SSH_TTY`, which also catches mosh, or an active remote login in `who` - covering pi started locally but driven over ssh), the tool prints the form URL with tailored hints: a Moshi preview tip (only when the moshi-hook gateway answers on `127.0.0.1:24543`), an exact `ssh -L` command with the real port, and a mosh can't-forward-ports caveat.
 
 ### Fixed
 - Over SSH on macOS, the Glimpse window no longer opens on the host's own display where closing it silently cancelled the interview; Glimpse is skipped for remote-looking sessions.

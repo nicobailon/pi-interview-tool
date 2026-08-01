@@ -1451,6 +1451,15 @@ export async function startInterviewServer(
 				}
 			};
 
+			// Discovery probes (e.g. Moshi's moshi-hook) check whether a listener speaks HTTP,
+			// commonly via HEAD. Answer 200 with headers only: no token logic, no heartbeat,
+			// nothing for the abandon watchdog - just "an HTTP server lives here".
+			if (method === "HEAD" && url.pathname === "/") {
+				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+				res.end();
+				return;
+			}
+
 			if (method === "GET" && url.pathname === "/") {
 				// Loopback is the trust boundary: anything on this machine could read the
 				// token from the sessions file anyway. Redirecting lets tokenless local opens
@@ -1464,8 +1473,19 @@ export async function startInterviewServer(
 				const fetchMode = req.headers["sec-fetch-mode"];
 				const isNavigation = fetchMode === undefined || fetchMode === "navigate";
 				if (!url.searchParams.has("session") && isLoopback && isNavigation) {
-					res.writeHead(302, { Location: `/?session=${sessionToken}` });
-					res.end();
+					// A 200 shell instead of a 302: discovery scanners (moshi-hook) only list
+					// servers whose GET / returns 200, and the <title> becomes the picker row.
+					// Server-side stateless (no heartbeat, nothing arms the abandon watchdog);
+					// the embedded token is safe cross-origin: no CORS headers, and rebinding
+					// is blocked by the Host allowlist above.
+					const title = questions.title || "Interview";
+					const dest = `/?session=${encodeURIComponent(sessionToken)}`;
+					res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+					res.end(
+						`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
+							`<noscript><meta http-equiv="refresh" content="0;url=${dest}"></noscript></head>` +
+							`<body><script>location.replace(${JSON.stringify(dest)});</script></body></html>`,
+					);
 					return;
 				}
 				if (!validateTokenQuery(url, sessionToken, res)) return;
@@ -2046,12 +2066,29 @@ export async function startInterviewServer(
 	});
 
 	return new Promise((resolve, reject) => {
-		const onError = (err: Error) => {
+		// moshi-hook's discovery ignores listeners in the ephemeral range, so a random
+		// OS-assigned port makes the form invisible to Moshi's browser preview. Prefer a
+		// low base port and scan forward on collision (keeps concurrent interviews working),
+		// falling back to ephemeral. Predictable ports are safe here: the Host allowlist
+		// blocks DNS rebinding and every stateful route still requires the session token.
+		const candidates = port !== undefined ? [port] : [];
+		if (port === undefined) {
+			for (let p = 8377; p < 8397; p++) candidates.push(p);
+			candidates.push(0);
+		}
+		let attempt = 0;
+
+		const onError = (err: NodeJS.ErrnoException) => {
+			attempt++;
+			if (err.code === "EADDRINUSE" && attempt < candidates.length) {
+				server.once("error", onError);
+				server.listen(candidates[attempt], "127.0.0.1", onListening);
+				return;
+			}
 			reject(new Error(`Failed to start server: ${err.message}`));
 		};
 
-		server.once("error", onError);
-		server.listen(port ?? 0, "127.0.0.1", () => {
+		const onListening = () => {
 			server.off("error", onError);
 			const addr = server.address();
 			if (!addr || typeof addr === "string") {
@@ -2099,6 +2136,9 @@ export async function startInterviewServer(
 					} catch {}
 				},
 			});
-		});
+		};
+
+		server.once("error", onError);
+		server.listen(candidates[0], "127.0.0.1", onListening);
 	});
 }
