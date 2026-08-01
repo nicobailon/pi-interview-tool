@@ -3704,6 +3704,14 @@
       successOverlay.classList.remove("hidden");
       setTimeout(() => {
         closeWindow();
+        // In-app browsers (Moshi) and tabs we didn't open ignore window.close().
+        // If we're still here, tell the user the ball is back in the terminal.
+        setTimeout(() => {
+          const note = successOverlay.querySelector("p");
+          if (note && !document.hidden) {
+            note.textContent = "Responses submitted - you can close this page and return to the terminal.";
+          }
+        }, 400);
       }, 800);
     } catch (err) {
       if (isNetworkError(err)) {
