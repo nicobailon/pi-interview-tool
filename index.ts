@@ -205,14 +205,14 @@ function hasActiveRemoteLogin(): boolean {
 
 // Moshi's moshi-hook daemon owns a gateway on 127.0.0.1:24543; a live connection
 // is the same authoritative check the Moshi app itself uses.
-function probeMoshiGateway(timeoutMs = 300): Promise<boolean> {
+function probeMoshiGateway(): Promise<boolean> {
 	return new Promise((resolve) => {
 		const socket = net.connect({ host: "127.0.0.1", port: 24543 });
 		const done = (ok: boolean) => {
 			socket.destroy();
 			resolve(ok);
 		};
-		socket.setTimeout(timeoutMs);
+		socket.setTimeout(300);
 		socket.once("connect", () => done(true));
 		socket.once("timeout", () => done(false));
 		socket.once("error", () => done(false));

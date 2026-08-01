@@ -2067,8 +2067,10 @@ export async function startInterviewServer(
 		// low base port and scan forward on collision (keeps concurrent interviews working),
 		// falling back to ephemeral. Predictable ports are safe here: the Host allowlist
 		// blocks DNS rebinding and every stateful route still requires the session token.
-		const candidates = port !== undefined ? [port] : [];
-		if (port === undefined) {
+		const candidates: number[] = [];
+		if (port !== undefined) {
+			candidates.push(port);
+		} else {
 			for (let p = 8377; p < 8397; p++) candidates.push(p);
 			candidates.push(0);
 		}
