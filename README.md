@@ -67,6 +67,8 @@ Restart pi to load the extension.
 
 **Timeout behavior:** The countdown (visible in corner) resets on any activity - typing, clicking, or mouse movement. When it expires, an overlay appears giving the user a chance to continue. Progress is never lost thanks to localStorage auto-save.
 
+**Remote and Moshi sessions:** When the session looks remote (ssh/mosh env, or an active remote login on the host), the tool skips or supplements the local window and prints the form URL with access hints: a Moshi tip when the moshi-hook gateway is running (tap the preview button in the terminal title bar and pick the interview server), and an exact `ssh -L` command for plain SSH (mosh can't forward ports). The server binds low ports (8377+, scanning forward on collision) and answers tokenless loopback opens with a landing page that hops to the form, so Moshi's browser preview reaches it in one tap. Requests with a non-loopback `Host` header are rejected.
+
 **Multi-agent behavior:** When multiple agents run interviews simultaneously, only the first auto-opens the window. Subsequent interviews are queued and shown as a URL in the tool output, preventing focus stealing. When you submit the active interview, the window automatically redirects to the next queued interview. Active interviews also surface a top-right toast with a dropdown to open queued sessions. A session status bar at the top of each form shows the project path, git branch, and session ID for easy identification.
 
 ## Usage
