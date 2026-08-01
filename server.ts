@@ -2,7 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { tmpdir, homedir } from "node:os";
 import { join, dirname, basename, resolve } from "node:path";
-import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, renameSync, writeFileSync, chmodSync } from "node:fs";
 import { mkdir, writeFile, copyFile } from "node:fs/promises";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -89,6 +89,8 @@ function writeSessions(data: SessionsFile): void {
 	ensurePiDir();
 	const tempFile = SESSIONS_FILE + ".tmp";
 	writeFileSync(tempFile, JSON.stringify(data, null, 2), { mode: 0o600 });
+	// writeFileSync's mode only applies on creation; a pre-existing .tmp keeps its old mode.
+	chmodSync(tempFile, 0o600);
 	renameSync(tempFile, SESSIONS_FILE);
 }
 
@@ -1466,13 +1468,7 @@ export async function startInterviewServer(
 				// (e.g. Moshi's browser preview over its SSH forward) land on the form.
 				const remoteAddr = req.socket.remoteAddress;
 				const isLoopback = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
-				// Only top-level navigations get the redirect: a page-driven fetch (Sec-Fetch-Mode
-				// cors/no-cors) following it would validate the token, touch the heartbeat, and arm
-				// the abandon watchdog for a form nobody opened. Header-less clients (curl, ssh
-				// forwards) fail open and keep the redirect.
-				const fetchMode = req.headers["sec-fetch-mode"];
-				const isNavigation = fetchMode === undefined || fetchMode === "navigate";
-				if (!url.searchParams.has("session") && isLoopback && isNavigation) {
+				if (!url.searchParams.has("session") && isLoopback) {
 					// A 200 shell instead of a 302: discovery scanners (moshi-hook) only list
 					// servers whose GET / returns 200, and the <title> becomes the picker row.
 					// Server-side stateless (no heartbeat, nothing arms the abandon watchdog);

@@ -1031,6 +1031,12 @@ export default function (pi: ExtensionAPI) {
 			let resolved = false;
 			let url = "";
 			const cleanup = () => {
+				// Close the native window on every finish path, not just abort: the form can
+				// complete from another client (e.g. Moshi's browser) while Glimpse is open.
+				if (glimpseWin) {
+					try { glimpseWin.close(); } catch {}
+					glimpseWin = null;
+				}
 				if (server) {
 					server.close();
 					server = null;
@@ -1078,10 +1084,6 @@ export default function (pi: ExtensionAPI) {
 				};
 
 				const handleAbort = () => {
-					if (glimpseWin) {
-						try { glimpseWin.close(); } catch {}
-						glimpseWin = null;
-					}
 					finish("aborted");
 				};
 				signal?.addEventListener("abort", handleAbort, { once: true });
