@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- One-tap access from remote and Moshi sessions: tokenless top-level navigations from loopback now redirect to the tokenized form URL, so Moshi's browser preview lands on a working form over its per-session SSH forward. Page-driven `cors`/`no-cors` fetches still get 403, so a drive-by request cannot arm the abandon watchdog.
+- When the browser launch fails or the session looks remote (`SSH_CONNECTION`/`SSH_TTY`, which also catches mosh), the tool prints the form URL with tailored hints: a Moshi preview tip (only when the moshi-hook gateway answers on `127.0.0.1:24543`), an exact `ssh -L` command with the real port, and a mosh can't-forward-ports caveat.
+
+### Fixed
+- Over SSH on macOS, the Glimpse window no longer opens on the host's own display where closing it silently cancelled the interview; Glimpse is skipped for remote-looking sessions.
+
+### Security
+- Requests with a non-loopback `Host` header are rejected with 403, closing DNS-rebinding attacks against the local form server.
+- `~/.pi/interview-sessions.json` (which stores tokenized URLs) is now written with mode 0600 instead of world-readable.
+
 ## [0.9.1] - 2026-07-30
 
 ### Changed

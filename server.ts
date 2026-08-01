@@ -88,7 +88,7 @@ function listSessions(): SessionEntry[] {
 function writeSessions(data: SessionsFile): void {
 	ensurePiDir();
 	const tempFile = SESSIONS_FILE + ".tmp";
-	writeFileSync(tempFile, JSON.stringify(data, null, 2));
+	writeFileSync(tempFile, JSON.stringify(data, null, 2), { mode: 0o600 });
 	renameSync(tempFile, SESSIONS_FILE);
 }
 
@@ -258,6 +258,7 @@ export interface InterviewServerCallbacks {
 export interface InterviewServerHandle {
 	server: http.Server;
 	url: string;
+	port: number;
 	close: () => void;
 }
 
@@ -1426,7 +1427,14 @@ export async function startInterviewServer(
 	const server = http.createServer(async (req, res) => {
 		try {
 			const method = req.method || "GET";
-			const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+			const hostHeader = req.headers.host;
+			const url = new URL(req.url || "/", `http://${hostHeader || "127.0.0.1"}`);
+			// This closes DNS rebinding: a rebound request carries the attacker's Host.
+			const isAllowedHost = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1" || url.hostname === "[::1]";
+			if (hostHeader !== undefined && !isAllowedHost) {
+				sendText(res, 403, "Invalid host");
+				return;
+			}
 			log(verbose, `${method} ${url.pathname}`);
 
 			const parseBodyOrRespond = async (): Promise<unknown | null> => {
@@ -1444,6 +1452,22 @@ export async function startInterviewServer(
 			};
 
 			if (method === "GET" && url.pathname === "/") {
+				// Loopback is the trust boundary: anything on this machine could read the
+				// token from the sessions file anyway. Redirecting lets tokenless local opens
+				// (e.g. Moshi's browser preview over its SSH forward) land on the form.
+				const remoteAddr = req.socket.remoteAddress;
+				const isLoopback = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
+				// Only top-level navigations get the redirect: a page-driven fetch (Sec-Fetch-Mode
+				// cors/no-cors) following it would validate the token, touch the heartbeat, and arm
+				// the abandon watchdog for a form nobody opened. Header-less clients (curl, ssh
+				// forwards) fail open and keep the redirect.
+				const fetchMode = req.headers["sec-fetch-mode"];
+				const isNavigation = fetchMode === undefined || fetchMode === "navigate";
+				if (!url.searchParams.has("session") && isLoopback && isNavigation) {
+					res.writeHead(302, { Location: `/?session=${sessionToken}` });
+					res.end();
+					return;
+				}
 				if (!validateTokenQuery(url, sessionToken, res)) return;
 				touchHeartbeat();
 				const inlineData = safeInlineJSON({
@@ -2066,6 +2090,7 @@ export async function startInterviewServer(
 			resolve({
 				server,
 				url,
+				port: addr.port,
 				close: () => {
 					try {
 						markCompleted();
