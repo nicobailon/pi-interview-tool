@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- Added a strict, no-emit TypeScript check with exact optional-property validation.
+
 ### Fixed
+- Response unions now preserve homogeneous choice/image arrays, non-attachment uploads require image questions, and optional saved-interview fields are omitted instead of assigned `undefined`.
 - Remote-session detection no longer blocks Pi while checking active logins, and successful host-side browser opens now explain clearly where remote users should open the interview.
 - Moshi and other in-app browsers now restore the post-submit close guidance when the preview returns from the background after ignoring `window.close()`.
 - Low-port bind retries now remove the stale `listening` callback before scanning to the next candidate.

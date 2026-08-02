@@ -21,6 +21,12 @@ import interviewExtension, {
 } from "./index.ts";
 import { validateQuestions, type Question } from "./schema.ts";
 
+const fetch: typeof globalThis.fetch = (input, init) => {
+	const headers = new Headers(init?.headers);
+	headers.set("Connection", "close");
+	return globalThis.fetch(input, { ...init, headers });
+};
+
 describe("openLinuxUrl", () => {
 	const url = "http://127.0.0.1:1234/interview";
 
@@ -183,7 +189,6 @@ describe("extractGenerateResponseText", () => {
 		expect(() =>
 			extractGenerateResponseText("openai/gpt-5.4", {
 				stopReason: "stop",
-				errorMessage: undefined,
 				content: [],
 			}),
 		).toThrow("openai/gpt-5.4 returned no text response");
@@ -624,6 +629,41 @@ describe("server binding", () => {
 			}
 		} finally {
 			first.close();
+		}
+	});
+});
+
+describe("image upload boundaries", () => {
+	it.each(["/submit", "/save"])("rejects non-attachment images for choice questions on %s", async (pathname) => {
+		const handle = await startInterviewServer(
+			{
+				questions: {
+					title: "Image boundary",
+					questions: [{ id: "choice", type: "single", question: "Pick one", options: ["A"] }],
+				},
+				sessionToken: "image-boundary-token",
+				sessionId: `image-boundary-${pathname.slice(1)}`,
+				cwd: process.cwd(),
+				timeout: 600,
+			},
+			{ onSubmit: () => {}, onCancel: () => {} },
+		);
+		try {
+			const response = await fetch(new URL(pathname, handle.url), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					token: "image-boundary-token",
+					responses: [{ id: "choice", value: { option: "A" } }],
+					images: [{ id: "choice", filename: "test.png", mimeType: "image/png", data: "" }],
+				}),
+			});
+			const result = await response.json();
+
+			expect(response.status).toBe(400);
+			expect(result).toMatchObject({ error: "Image uploads require an image question", field: "choice" });
+		} finally {
+			handle.close();
 		}
 	});
 });
