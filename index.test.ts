@@ -592,6 +592,42 @@ describe("tool registration", () => {
 	});
 });
 
+describe("server binding", () => {
+	it("scans forward when the first low port is already in use", async () => {
+		const first = await startInterviewServer(
+			{
+				questions: { title: "First", questions: [{ id: "q", type: "text", question: "Q?" }] },
+				sessionToken: "first-token",
+				sessionId: "first-session",
+				cwd: process.cwd(),
+				timeout: 600,
+			},
+			{ onSubmit: () => {}, onCancel: () => {} },
+		);
+		try {
+			const second = await startInterviewServer(
+				{
+					questions: { title: "Second", questions: [{ id: "q", type: "text", question: "Q?" }] },
+					sessionToken: "second-token",
+					sessionId: "second-session",
+					cwd: process.cwd(),
+					timeout: 600,
+				},
+				{ onSubmit: () => {}, onCancel: () => {} },
+			);
+			try {
+				expect(second.port).not.toBe(first.port);
+				expect(second.port).toBeGreaterThanOrEqual(8377);
+				expect(second.port).toBeLessThanOrEqual(8396);
+			} finally {
+				second.close();
+			}
+		} finally {
+			first.close();
+		}
+	});
+});
+
 describe("rich option question flows", () => {
 	it("shows clarification fields for rich-option questions too", () => {
 		const clientSource = readFileSync("form/script.js", "utf-8");

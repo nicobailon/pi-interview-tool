@@ -5,6 +5,7 @@
 ### Fixed
 - Remote-session detection no longer blocks Pi while checking active logins, and successful host-side browser opens now explain clearly where remote users should open the interview.
 - Moshi and other in-app browsers now restore the post-submit close guidance when the preview returns from the background after ignoring `window.close()`.
+- Low-port bind retries now remove the stale `listening` callback before scanning to the next candidate.
 
 ## [0.10.0] - 2026-08-01
 

@@ -2077,6 +2077,7 @@ export async function startInterviewServer(
 		let attempt = 0;
 
 		const onError = (err: NodeJS.ErrnoException) => {
+			server.off("listening", onListening);
 			attempt++;
 			if (err.code === "EADDRINUSE" && attempt < candidates.length) {
 				server.once("error", onError);
