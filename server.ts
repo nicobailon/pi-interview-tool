@@ -547,14 +547,28 @@ function normalizeChoiceResponseValue(value: unknown): ChoiceResponseValue | nul
 
 function cloneResponseValue(value: ResponseValue): ResponseValue {
 	if (Array.isArray(value)) {
-		return value.map((item) => isChoiceResponseValue(item)
-			? { ...item }
-			: item);
+		if (value.every((item): item is string => typeof item === "string")) {
+			return [...value];
+		}
+		if (value.every(isChoiceResponseValue)) {
+			return value.map((item) => ({ ...item }));
+		}
+		throw new Error("Invalid mixed response array");
 	}
 	if (isChoiceResponseValue(value)) {
 		return { ...value };
 	}
 	return value;
+}
+
+function appendImagePath(value: ResponseValue, imagePath: string): string | string[] {
+	if (typeof value === "string") {
+		return value === "" ? imagePath : [value, imagePath];
+	}
+	if (Array.isArray(value) && value.every((item): item is string => typeof item === "string")) {
+		return [...value, imagePath];
+	}
+	throw new Error("Invalid image response value");
 }
 
 function normalizeResponseItem(
@@ -699,10 +713,10 @@ function normalizeSavedOptionInsights(input: unknown): SavedOptionInsight[] {
 			optionText: raw.optionText,
 			prompt: raw.prompt,
 			summary: raw.summary,
-			bullets: bullets && bullets.length > 0 ? bullets : undefined,
-			suggestedText: typeof raw.suggestedText === "string" ? raw.suggestedText : undefined,
-			modelUsed: typeof raw.modelUsed === "string" ? raw.modelUsed : raw.modelUsed === null ? null : undefined,
-			createdAt: typeof raw.createdAt === "string" ? raw.createdAt : undefined,
+			...(bullets && bullets.length > 0 ? { bullets } : {}),
+			...(typeof raw.suggestedText === "string" ? { suggestedText: raw.suggestedText } : {}),
+			...(typeof raw.modelUsed === "string" || raw.modelUsed === null ? { modelUsed: raw.modelUsed } : {}),
+			...(typeof raw.createdAt === "string" ? { createdAt: raw.createdAt } : {}),
 		});
 	}
 	return normalized;
@@ -1041,7 +1055,9 @@ function renderQuestionsHtml(
 			if (!value || (Array.isArray(value) && value.length === 0)) {
 				answerHtml = '<div class="saved-answer empty">(no answer)</div>';
 			} else if (q.type === "image") {
-				const paths = Array.isArray(value) ? value : [value];
+				const paths = Array.isArray(value)
+					? value.filter((item): item is string => typeof item === "string")
+					: typeof value === "string" ? [value] : [];
 				answerHtml = `<div class="saved-images">${paths
 					.map((p) => `<img src="${escapeHtml(p)}" alt="uploaded image">`)
 					.join("")}</div>`;
@@ -1698,6 +1714,10 @@ export async function startInterviewServer(
 						sendJson(res, 400, { ok: false, error: questionCheck.error, field: image.id });
 						return;
 					}
+					if (!image.isAttachment && questionCheck.question.type !== "image") {
+						sendJson(res, 400, { ok: false, error: "Image uploads require an image question", field: image.id });
+						return;
+					}
 
 					if (
 						typeof image.filename !== "string" ||
@@ -1721,13 +1741,7 @@ export async function startInterviewServer(
 							}
 						} else {
 							if (existing) {
-								if (Array.isArray(existing.value)) {
-									existing.value.push(filepath);
-								} else if (existing.value === "") {
-									existing.value = filepath;
-								} else {
-									existing.value = [existing.value, filepath];
-								}
+								existing.value = appendImagePath(existing.value, filepath);
 							} else {
 								responses.push({ id: image.id, value: filepath });
 							}
@@ -1788,6 +1802,19 @@ export async function startInterviewServer(
 					return;
 				}
 
+				for (const image of imagesInput) {
+					if (!image || typeof image.id !== "string") continue;
+					const questionCheck = ensureQuestionId(image.id, questionById);
+					if (questionCheck.ok === false) {
+						sendJson(res, 400, { ok: false, error: questionCheck.error, field: image.id });
+						return;
+					}
+					if (!image.isAttachment && questionCheck.question.type !== "image") {
+						sendJson(res, 400, { ok: false, error: "Image uploads require an image question", field: image.id });
+						return;
+					}
+				}
+
 				const snapshotBaseDir = options.snapshotDir ?? SNAPSHOTS_DIR;
 
 				// Build folder name: {title}-{project}-{branch}-{timestamp}[-submitted]
@@ -1809,7 +1836,7 @@ export async function startInterviewServer(
 				const savedResponses: ResponseItem[] = normalizedResponses.responses.map((response) => ({
 					...response,
 					value: cloneResponseValue(response.value),
-					attachments: response.attachments ? [...response.attachments] : undefined,
+					...(response.attachments ? { attachments: [...response.attachments] } : {}),
 				}));
 
 				// Process uploaded images - save to images/ subfolder
@@ -1832,13 +1859,7 @@ export async function startInterviewServer(
 								}
 							} else {
 								if (existing) {
-									if (Array.isArray(existing.value)) {
-										existing.value.push(relPath);
-									} else if (existing.value === "") {
-										existing.value = relPath;
-									} else {
-										existing.value = [existing.value, relPath];
-									}
+									existing.value = appendImagePath(existing.value, relPath);
 								} else {
 									savedResponses.push({ id: image.id, value: relPath });
 								}
@@ -1910,7 +1931,7 @@ export async function startInterviewServer(
 				}
 
 				const question = questionById.get(payload.questionId);
-				if (!question || (question.type !== "single" && question.type !== "multi")) {
+				if (!question || (question.type !== "single" && question.type !== "multi") || !question.options) {
 					sendJson(res, 400, { ok: false, error: "Invalid question for generation" });
 					return;
 				}
@@ -1939,7 +1960,7 @@ export async function startInterviewServer(
 					const storedQuestion = questions.questions.find((q) => q.id === payload.questionId);
 					let nextOptionKeys = optionKeysByQuestion[payload.questionId] ?? [];
 					let appliedOptions: OptionValue[] = [];
-					if (storedQuestion) {
+					if (storedQuestion?.options) {
 						if (mode === "review" && reviewedQuestion && uniqueOptions.length > 0) {
 							const previousOptions = [...storedQuestion.options];
 							const previousKeys = [...(optionKeysByQuestion[payload.questionId] ?? [])];

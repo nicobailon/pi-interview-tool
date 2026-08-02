@@ -314,11 +314,13 @@ function mergeThemeConfig(
 	cwd: string
 ): InterviewThemeSettings {
 	const merged: InterviewThemeSettings = { ...(base ?? {}), ...(override ?? {}) };
+	const lightPath = resolveOptionalPath(merged.lightPath, cwd);
+	const darkPath = resolveOptionalPath(merged.darkPath, cwd);
 	return {
 		...merged,
 		toggleHotkey: merged.toggleHotkey ?? DEFAULT_THEME_HOTKEY,
-		lightPath: resolveOptionalPath(merged.lightPath, cwd),
-		darkPath: resolveOptionalPath(merged.darkPath, cwd),
+		...(lightPath !== undefined ? { lightPath } : {}),
+		...(darkPath !== undefined ? { darkPath } : {}),
 	};
 }
 
@@ -430,15 +432,15 @@ export function selectGenerateModels<T extends GenerateModelCandidate>(
 	return { primary: availableModels[0] ?? null, fallback: null };
 }
 
-export function buildAskModelsData(
-	availableModels: Model<Api>[],
-	currentModel: Model<Api> | null,
-	primaryModel: Model<Api> | null,
-	fallbackModel: Model<Api> | null,
+export function buildAskModelsData<T extends GenerateModelCandidate>(
+	availableModels: T[],
+	currentModel: T | null,
+	primaryModel: T | null,
+	fallbackModel: T | null,
 ): AskModelOption[] {
 	const models: AskModelOption[] = [];
 	const seen = new Set<string>();
-	const addModel = (model: Model<Api> | null) => {
+	const addModel = (model: T | null) => {
 		if (!model) return;
 		const value = `${model.provider}/${model.id}`;
 		if (seen.has(value)) return;
@@ -592,8 +594,8 @@ function normalizeGeneratedOptionValues(parsed: unknown): OptionValue[] {
 			if (!option || typeof option !== "object") {
 				return true;
 			}
-			return typeof (option as Record<string, unknown>).label !== "string"
-				|| (option as Record<string, unknown>).label.length > 0;
+			const label = (option as Record<string, unknown>).label;
+			return typeof label !== "string" || label.length > 0;
 		});
 
 	const validated = validateQuestions({
@@ -704,12 +706,11 @@ export function parseOptionInsight(text: string): OptionInsightResult {
 		? insight.bullets.filter((bullet): bullet is string => typeof bullet === "string" && bullet.trim().length > 0).map((bullet) => bullet.trim())
 		: [];
 
+	const suggestedText = typeof insight.suggestedText === "string" ? insight.suggestedText.trim() : "";
 	return {
 		summary: insight.summary.trim(),
-		bullets: bullets.length > 0 ? bullets : undefined,
-		suggestedText: typeof insight.suggestedText === "string" && insight.suggestedText.trim().length > 0
-			? insight.suggestedText.trim()
-			: undefined,
+		...(bullets.length > 0 ? { bullets } : {}),
+		...(suggestedText ? { suggestedText } : {}),
 	};
 }
 
@@ -773,12 +774,12 @@ export function loadSavedInterview(html: string, filePath: string): SavedQuestio
 	// Return validated questions plus saved interview metadata
 	return {
 		...validated,
-		savedAnswers,
-		savedOptionInsights,
-		optionKeysByQuestion,
-		savedAt: typeof raw.savedAt === "string" ? raw.savedAt : undefined,
-		wasSubmitted: typeof raw.wasSubmitted === "boolean" ? raw.wasSubmitted : undefined,
-		savedFrom,
+		...(savedAnswers !== undefined ? { savedAnswers } : {}),
+		...(savedOptionInsights !== undefined ? { savedOptionInsights } : {}),
+		...(optionKeysByQuestion !== undefined ? { optionKeysByQuestion } : {}),
+		...(typeof raw.savedAt === "string" ? { savedAt: raw.savedAt } : {}),
+		...(typeof raw.wasSubmitted === "boolean" ? { wasSubmitted: raw.wasSubmitted } : {}),
+		...(savedFrom !== undefined ? { savedFrom } : {}),
 	};
 }
 
@@ -789,10 +790,11 @@ function resolveAnswerPaths(
 ): ResponseItem[] {
 	return answers.map((ans) => {
 		const questionType = questionTypeById.get(ans.id);
+		const attachments = ans.attachments?.map((attachmentPath) => resolveImagePath(attachmentPath, baseDir));
 		return {
 			...ans,
 			value: questionType === "image" ? resolvePathValue(ans.value, baseDir) : ans.value,
-			attachments: ans.attachments?.map((attachmentPath) => resolveImagePath(attachmentPath, baseDir)),
+			...(attachments !== undefined ? { attachments } : {}),
 		};
 	});
 }
@@ -806,9 +808,9 @@ function resolveImagePath(p: string, baseDir: string): string {
 	return path.join(baseDir, expanded);
 }
 
-function resolvePathValue(value: string | string[], baseDir: string): string | string[] {
-	if (Array.isArray(value)) {
-		return value.map((v) => resolveImagePath(v, baseDir));
+function resolvePathValue(value: ResponseItem["value"], baseDir: string): ResponseItem["value"] {
+	if (Array.isArray(value) && value.every((item): item is string => typeof item === "string")) {
+		return value.map((item) => resolveImagePath(item, baseDir));
 	}
 	return typeof value === "string" && value ? resolveImagePath(value, baseDir) : value;
 }
@@ -886,19 +888,17 @@ export function buildAnsweredAgentResponseItems(
 		responseById.set(response.id, response);
 	}
 
-	return questions
-		.map((question) => {
-			const response = responseById.get(question.id);
-			if (!response || !hasResponseContent(response)) return null;
-			return {
-				id: question.id,
-				question: question.question,
-				type: question.type,
-				value: response.value,
-				attachments: response.attachments?.length ? [...response.attachments] : undefined,
-			} satisfies AgentResponseItem;
-		})
-		.filter((item): item is AgentResponseItem => item !== null);
+	return questions.flatMap((question): AgentResponseItem[] => {
+		const response = responseById.get(question.id);
+		if (!response || !hasResponseContent(response)) return [];
+		return [{
+			id: question.id,
+			question: question.question,
+			type: question.type,
+			value: response.value,
+			...(response.attachments?.length ? { attachments: [...response.attachments] } : {}),
+		}];
+	});
 }
 
 export function formatAnsweredResponsesForAgent(
@@ -1121,9 +1121,9 @@ export default function (pi: ExtensionAPI) {
 							requestModel,
 							createGenerateContext(prompt, systemPrompt),
 							{
-								apiKey: requestAuth.apiKey,
-								headers: requestAuth.headers,
-								env: resolution.env,
+								...(requestAuth.apiKey !== undefined ? { apiKey: requestAuth.apiKey } : {}),
+								...(requestAuth.headers !== undefined ? { headers: requestAuth.headers } : {}),
+								...(resolution.env !== undefined ? { env: resolution.env } : {}),
 								signal: generateSignal,
 							},
 						).result();
@@ -1373,14 +1373,14 @@ export default function (pi: ExtensionAPI) {
 						sessionId,
 						cwd: ctx.cwd,
 						timeout: timeoutSeconds,
-						port: settings.port,
-						verbose,
+						...(settings.port !== undefined ? { port: settings.port } : {}),
+						...(verbose !== undefined ? { verbose } : {}),
 						theme: themeConfig,
-						snapshotDir,
+						...(snapshotDir !== undefined ? { snapshotDir } : {}),
 						autoSaveOnSubmit: settings.autoSaveOnSubmit ?? true,
-						savedAnswers: questionsData.savedAnswers,
-						savedOptionInsights: questionsData.savedOptionInsights,
-						optionKeysByQuestion: questionsData.optionKeysByQuestion,
+						...(questionsData.savedAnswers !== undefined ? { savedAnswers: questionsData.savedAnswers } : {}),
+						...(questionsData.savedOptionInsights !== undefined ? { savedOptionInsights: questionsData.savedOptionInsights } : {}),
+						...(questionsData.optionKeysByQuestion !== undefined ? { optionKeysByQuestion: questionsData.optionKeysByQuestion } : {}),
 						canGenerate: generateModel !== null,
 						askModels,
 						defaultAskModel,
@@ -1391,8 +1391,8 @@ export default function (pi: ExtensionAPI) {
 							reason === "timeout"
 								? finish("timeout", partialResponses ?? [])
 								: finish("cancelled", partialResponses ?? [], reason),
-						onGenerate,
-						onOptionInsight,
+						...(onGenerate !== undefined ? { onGenerate } : {}),
+						...(onOptionInsight !== undefined ? { onOptionInsight } : {}),
 					}
 				)
 					.then(async (handle) => {

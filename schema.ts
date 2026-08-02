@@ -240,9 +240,9 @@ function validateContentBlock(block: unknown, context: string): ContentBlock {
 		return {
 			source: b.source,
 			lang: b.lang.trim().toLowerCase() as "md" | "markdown",
-			file: b.file,
-			title: b.title,
-			showSource: b.showSource,
+			...(typeof b.file === "string" ? { file: b.file } : {}),
+			...(typeof b.title === "string" ? { title: b.title } : {}),
+			...(typeof b.showSource === "boolean" ? { showSource: b.showSource } : {}),
 		};
 	}
 
@@ -252,11 +252,11 @@ function validateContentBlock(block: unknown, context: string): ContentBlock {
 
 	return {
 		source: b.source,
-		lang: b.lang,
-		file: b.file,
-		title: b.title,
-		lines: b.lines,
-		highlights: b.highlights as number[] | undefined,
+		...(typeof b.lang === "string" ? { lang: b.lang } : {}),
+		...(typeof b.file === "string" ? { file: b.file } : {}),
+		...(typeof b.title === "string" ? { title: b.title } : {}),
+		...(typeof b.lines === "string" ? { lines: b.lines } : {}),
+		...(Array.isArray(b.highlights) ? { highlights: b.highlights as number[] } : {}),
 	};
 }
 
