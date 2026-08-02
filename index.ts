@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as net from "node:net";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { execSync, execFileSync, spawn as spawnProcess } from "node:child_process";
+import { execSync, execFile, execFileSync, spawn as spawnProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import {
 	startInterviewServer,
@@ -194,13 +194,16 @@ function isRemoteSession(): boolean {
 // The env heuristic can't see a user who started pi locally (e.g. Ghostty at the desk)
 // and later drives it over ssh/Moshi: the process env stays local. An active remote
 // login in utmp (`who` shows the client address in parens) marks that ambiguous case.
-function hasActiveRemoteLogin(): boolean {
-	try {
-		const out = execFileSync("who", { encoding: "utf8", timeout: 2000 });
-		return /\(.+\)\s*$/m.test(out);
-	} catch {
-		return false;
-	}
+function hasActiveRemoteLogin(): Promise<boolean> {
+	return new Promise((resolve) => {
+		execFile("who", { encoding: "utf8", timeout: 2000 }, (error, out) => {
+			if (error) {
+				resolve(false);
+				return;
+			}
+			resolve(/\(.+\)\s*$/m.test(out));
+		});
+	});
 }
 
 // Moshi's moshi-hook daemon owns a gateway on 127.0.0.1:24543; a live connection
@@ -219,16 +222,19 @@ function probeMoshiGateway(): Promise<boolean> {
 	});
 }
 
-// openError: null means the local browser launch succeeded.
-function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; openError: string | null }): string {
+type BrowserOpenOutcome =
+	| { status: "opened-on-host" }
+	| { status: "failed"; error: string };
+
+function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; outcome: BrowserOpenOutcome }): string {
 	const lines = [
-		opts.openError === null
-			? "This looks like a remote session - if no form appeared, open it from your own device:"
+		opts.outcome.status === "opened-on-host"
+			? "Interview opened on this host. If you're controlling this session remotely, open it from your own device:"
 			: "Couldn't open a browser here. Open the interview from your own device:",
 		`  ${opts.url}`,
 	];
-	if (opts.openError !== null) {
-		lines.push(`Browser launch failed: ${opts.openError}`);
+	if (opts.outcome.status === "failed") {
+		lines.push(`Browser launch failed: ${opts.outcome.error}`);
 	}
 	if (opts.moshi) {
 		lines.push("Moshi: tap the preview button in the terminal title bar and pick this server.");
@@ -1447,13 +1453,13 @@ export default function (pi: ExtensionAPI) {
 							// remoteLikely covers both the clear case (this process runs under ssh/mosh)
 							// and the ambiguous one (process started locally, but someone is ssh'd into
 							// this host right now - possibly the same human, via Moshi).
-							const remoteLikely = isRemoteSession() || hasActiveRemoteLogin();
-							const emitHint = async (openError: string | null): Promise<void> => {
+							const remoteLikely = isRemoteSession() || await hasActiveRemoteLogin();
+							const emitHint = async (outcome: BrowserOpenOutcome): Promise<void> => {
 								const hint = remoteAccessHint({
 									url,
 									port: handle.port,
 									moshi: await probeMoshiGateway(),
-									openError,
+									outcome,
 								});
 								if (onUpdate) {
 									onUpdate({
@@ -1461,7 +1467,7 @@ export default function (pi: ExtensionAPI) {
 										details: { status: "queued", url, responses: [], queuedMessage: hint },
 									});
 								} else {
-									ctx.ui.notify(hint, openError !== null ? "warning" : "info");
+									ctx.ui.notify(hint, outcome.status === "failed" ? "warning" : "info");
 								}
 							};
 							// A Glimpse window opened on a remote host display is unwatched; closing it cancels
@@ -1483,24 +1489,27 @@ export default function (pi: ExtensionAPI) {
 										}
 									});
 									if (remoteLikely) {
-										await emitHint(null);
+										await emitHint({ status: "opened-on-host" });
 									}
 									return;
 								} catch {
 									glimpseWin = null;
 								}
 							}
-							let openError: string | null = null;
+							let openOutcome: BrowserOpenOutcome = { status: "opened-on-host" };
 							try {
 								await openUrl(pi, url, settings.browser);
 							} catch (err) {
 								if (resolved) return;
-								openError = err instanceof Error ? err.message : String(err);
+								openOutcome = {
+									status: "failed",
+									error: err instanceof Error ? err.message : String(err),
+								};
 							}
 							// On macOS/Windows hosts open/start succeeds over ssh but opens on the host display,
 							// so remote-looking sessions also receive the hint after a successful launch.
-							if (openError !== null || remoteLikely) {
-								await emitHint(openError);
+							if (openOutcome.status === "failed" || remoteLikely) {
+								await emitHint(openOutcome);
 							}
 						}
 					})
