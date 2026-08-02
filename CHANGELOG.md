@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-02
+
 ### Added
 - Added a strict, no-emit TypeScript check with exact optional-property validation.
 
