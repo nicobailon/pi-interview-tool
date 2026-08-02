@@ -79,6 +79,19 @@
     }
   }
 
+  let completionPending = false;
+  function showCloseFallback() {
+    const note = successOverlay.querySelector("p");
+    if (note) {
+      note.textContent = "Responses submitted - you can close this page and return to the terminal.";
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (completionPending && !document.hidden) {
+      showCloseFallback();
+    }
+  });
+
   let filePickerOpen = false;
   const CLOSE_DELAY = 10;
   const RING_CIRCUMFERENCE = 100.53;
@@ -3702,14 +3715,15 @@
       }
 
       successOverlay.classList.remove("hidden");
+      completionPending = true;
       setTimeout(() => closeWindow(), 800);
       // In-app browsers (Moshi) and tabs we didn't open ignore window.close().
       // If we're still here after the close attempt, tell the user the ball is
-      // back in the terminal.
+      // back in the terminal. The visibility listener handles pages that were
+      // backgrounded when this timer fired.
       setTimeout(() => {
-        const note = successOverlay.querySelector("p");
-        if (note && !document.hidden) {
-          note.textContent = "Responses submitted - you can close this page and return to the terminal.";
+        if (!document.hidden) {
+          showCloseFallback();
         }
       }, 1200);
     } catch (err) {
