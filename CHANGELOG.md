@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-11
+
 ### Added
 - Added the `interview.launcher` setting for choosing Glimpse, browser, or Orca form opening. Thanks to Warren Winter (@w-winter, #19) for the contribution.
 
