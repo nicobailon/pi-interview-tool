@@ -14,6 +14,7 @@ export interface InterviewThemeSettings {
 
 export interface InterviewSettings {
 	browser?: string;
+	launcher?: "glimpse" | "browser" | "orca";
 	timeout?: number;
 	port?: number;
 	theme?: InterviewThemeSettings;
@@ -23,12 +24,24 @@ export interface InterviewSettings {
 	glimpseFloating?: boolean; // Default: false
 }
 
-export function loadSettings(): InterviewSettings {
-	if (!existsSync(SETTINGS_PATH)) {
+export const LAUNCHERS = ["glimpse", "browser", "orca"] as const;
+
+// launcher selects behavior, so an unrecognized value must fail loudly instead of
+// silently reverting to the automatic Glimpse-or-browser path.
+export function assertValidLauncher(value: unknown): void {
+	if (value === undefined) return;
+	if (typeof value === "string" && (LAUNCHERS as readonly string[]).includes(value)) return;
+	throw new Error(
+		`interview.launcher must be one of: ${LAUNCHERS.join(", ")} (received ${JSON.stringify(value)})`,
+	);
+}
+
+export function loadSettings(settingsPath: string = SETTINGS_PATH): InterviewSettings {
+	if (!existsSync(settingsPath)) {
 		return {};
 	}
 
-	const parsed = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8"));
+	const parsed = JSON.parse(readFileSync(settingsPath, "utf-8"));
 	if (typeof parsed !== "object" || parsed === null) {
 		return {};
 	}
@@ -38,5 +51,6 @@ export function loadSettings(): InterviewSettings {
 		return {};
 	}
 
+	assertValidLauncher((interview as Record<string, unknown>).launcher);
 	return interview as InterviewSettings;
 }
