@@ -4,7 +4,7 @@
 
 # Interview Tool
 
-A custom tool for pi-agent that opens an interactive form to gather user responses to clarification questions. On macOS, uses [Glimpse](https://github.com/hazat/glimpse) to render in a native WKWebView window; falls back to a browser tab on other platforms.
+A custom tool for pi-agent that opens an interactive form to gather user responses to clarification questions. On macOS, uses [Glimpse](https://github.com/hazat/glimpse) to render in a native WKWebView window; falls back to a browser tab on other platforms. The `launcher` setting can also open forms in an [Orca](https://github.com/stablyai/orca) browser tab.
 
 https://github.com/user-attachments/assets/52285bd9-956e-4020-aca5-9fbd82916934
 
@@ -36,6 +36,7 @@ Restart pi to load the extension.
 - **Session Recovery**: Abandoned/timed-out interviews save questions for later retry
 - **Save Snapshots**: Save interview state to HTML for later review or revival
 - **Session Status Bar**: Shows project path, git branch, and session ID for identification
+- **Launcher Selection**: Open forms in Glimpse, an Orca tab, or a browser
 - **Image Support**: Drag & drop anywhere on question, file picker, or paste a path into the dedicated path field
 - **Path Normalization**: Handles shell-escaped paths (`\ `) and macOS screenshot filenames (narrow no-break space before AM/PM)
 - **Generate & Review Options**: Single/multi-select questions, including rich-option questions with inline content blocks, show "✦ Generate more" (appends new choices) and "↻ Review options" (reviews options and rewrites the question for clarity) buttons powered by an LLM
@@ -309,6 +310,8 @@ Settings in `~/.pi/agent/settings.json`:
     "snapshotDir": "~/.pi/interview-snapshots/",
     "autoSaveOnSubmit": true,
     "generateModel": "anthropic/claude-haiku-4-5",
+    "launcher": "browser",
+    "browser": "Firefox",
     "glimpseFloating": false,
     "theme": {
       "mode": "auto",
@@ -330,6 +333,14 @@ Settings in `~/.pi/agent/settings.json`:
 **Port setting**: Set a fixed `port` (e.g., `19847`) to use a consistent port across sessions.
 
 **Generate model**: `generateModel` sets the model for the generate/review option actions (e.g., `"anthropic/claude-haiku-4-5"`). Defaults to the agent's current model, then falls back to a cheap available model. If an explicitly configured generate model fails at request time and the current session is using a different model, interview retries once with the current session model.
+
+**Launcher**: `launcher` selects where the form opens. Omit it for the default behavior: Glimpse on macOS when `glimpseui` is installed and the session is local, otherwise a browser tab.
+
+- `"glimpse"`: native macOS Glimpse window. Requires a local macOS session with `glimpseui` installed, and reports why the window could not open instead of using a browser.
+- `"browser"`: browser tab, even when Glimpse is installed
+- `"orca"`: browser tab in the current Orca-managed worktree, or in Orca's focused worktree when the working directory is not inside one. Orca focuses the tab when that worktree is visible; otherwise the tab is staged in its tab bar. The `orca` CLI must be available on `PATH`.
+
+**Browser**: `browser` names the application used for browser tabs (e.g. `"Firefox"`, `"Brave Browser"`). It applies when the form opens in a browser: `launcher: "browser"`, or `launcher` omitted with Glimpse unavailable. It has no effect under `"glimpse"` or `"orca"`.
 
 **Glimpse window**: `glimpseFloating` keeps the native macOS Glimpse window above other windows when `true` (default: `false`). It does not affect browser fallback behavior.
 

@@ -20,7 +20,7 @@ import {
 	type OptionInsightResult,
 } from "./server.ts";
 import { getOptionLabel, isRichOption, validateQuestions, sanitizeLLMJSON, type OptionValue, type Question, type QuestionsFile } from "./schema.ts";
-import { loadSettings, type InterviewThemeSettings } from "./settings.ts";
+import { loadSettings, type InterviewSettings, type InterviewThemeSettings } from "./settings.ts";
 
 interface GlimpseWindow {
 	on(event: "closed", handler: () => void): void;
@@ -28,6 +28,9 @@ interface GlimpseWindow {
 }
 
 let glimpseOpen: ((html: string, opts: Record<string, unknown>) => GlimpseWindow) | null | undefined;
+// Retains why a resolved glimpseui module failed to load, so an explicit "glimpse" launcher
+// can report a broken install instead of a missing one.
+let glimpseLoadError: string | null = null;
 
 function findGlimpseMjs(): string | null {
 	// Local node_modules
@@ -51,7 +54,9 @@ async function getGlimpseOpen() {
 		try {
 			glimpseOpen = (await import(resolved)).open;
 			return glimpseOpen;
-		} catch {}
+		} catch (error) {
+			glimpseLoadError = describeLaunchFailure("glimpseui import", error);
+		}
 	}
 	glimpseOpen = null;
 	return glimpseOpen;
@@ -82,6 +87,32 @@ function openInGlimpse(
 		title: title || "Interview",
 		floating,
 	});
+}
+
+// Glimpse is attempted in auto mode (no launcher configured) and when explicitly selected;
+// explicit "browser" and "orca" must never open a Glimpse window. A Glimpse window opened on
+// a remote host display is unwatched and closing it cancels the interview, so definite ssh/mosh
+// sessions never use it.
+export function shouldAttemptGlimpse(
+	launcher: InterviewSettings["launcher"],
+	platform: string,
+	remoteSession: boolean,
+): boolean {
+	if (launcher === "browser" || launcher === "orca") return false;
+	return platform === "darwin" && !remoteSession;
+}
+
+// An explicit "glimpse" launcher reports why the window could not open rather than quietly
+// using a browser, so a broken install is distinguishable from a missing or ineligible one.
+export function describeGlimpseUnavailable(
+	failure: string | null,
+	platform: string,
+	remoteSession: boolean,
+): string {
+	if (failure) return `Glimpse launcher unavailable: ${failure}`;
+	if (platform !== "darwin") return "Glimpse launcher unavailable: requires macOS";
+	if (remoteSession) return "Glimpse launcher unavailable: skipped for remote ssh/mosh sessions";
+	return "Glimpse launcher unavailable: install the glimpseui package";
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -122,6 +153,49 @@ function describeExecFailure(command: string, result: Awaited<ReturnType<Extensi
 	const status = result.killed ? `killed (exit code ${result.code})` : `exit code ${result.code}`;
 	const output = [result.stderr, result.stdout].filter(Boolean).join("\n");
 	return `${command}: ${status}${output ? `: ${output}` : ""}`;
+}
+
+function assertExecSucceeded(command: string, result: Awaited<ReturnType<ExtensionAPI["exec"]>>): void {
+	if (result.code !== 0 || result.killed) {
+		throw new Error(describeExecFailure(command, result));
+	}
+}
+
+export async function openOrcaUrl(
+	pi: Pick<ExtensionAPI, "exec">,
+	url: string,
+	cwd: string,
+): Promise<void> {
+	const createResult = await pi.exec(
+		"orca",
+		["tab", "create", "--url", url, "--json"],
+		{ timeout: 60_000, cwd },
+	);
+	assertExecSucceeded("orca tab create", createResult);
+
+	let output: unknown;
+	try {
+		output = JSON.parse(createResult.stdout);
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new Error(`orca tab create returned invalid JSON: ${reason}`);
+	}
+	const result = typeof output === "object" && output !== null
+		? (output as Record<string, unknown>).result
+		: undefined;
+	const browserPageId = typeof result === "object" && result !== null
+		? (result as Record<string, unknown>).browserPageId
+		: undefined;
+	if (typeof browserPageId !== "string") {
+		throw new Error(`orca tab create returned no browserPageId: ${createResult.stdout}`);
+	}
+
+	const switchResult = await pi.exec(
+		"orca",
+		["tab", "switch", "--page", browserPageId, "--focus"],
+		{ cwd },
+	);
+	assertExecSucceeded("orca tab switch", switchResult);
 }
 
 export async function openLinuxUrl(
@@ -945,7 +1019,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Interview",
 		description:
 			"Present an interactive form to gather user responses. " +
-			"On macOS, opens in a native window (Glimpse); falls back to a browser tab elsewhere. " +
+			"Opens in a configured Orca browser tab, a native macOS window (Glimpse), or a standard browser. " +
 			"Use proactively when: choosing between multiple approaches, gathering requirements before implementation, " +
 			"exploring design tradeoffs, or when decisions have multiple dimensions worth discussing. " +
 			"Provides better UX than back-and-forth chat for structured input. " +
@@ -1470,10 +1544,12 @@ export default function (pi: ExtensionAPI) {
 									ctx.ui.notify(hint, outcome.status === "failed" ? "warning" : "info");
 								}
 							};
-							// A Glimpse window opened on a remote host display is unwatched; closing it cancels
-							// the interview. Only the process's own env skips Glimpse: in the ambiguous case the
-							// user may be at the desk, so keep the window but print the hint too.
-							const glimpseOpenFn = os.platform() === "darwin" && !isRemoteSession() ? await getGlimpseOpen() : null;
+							// When only an active remote login suggests a remote user, they may still be at
+							// the desk, so keep the Glimpse window but print the access hint too.
+							const glimpseOpenFn = shouldAttemptGlimpse(settings.launcher, os.platform(), isRemoteSession())
+								? await getGlimpseOpen()
+								: null;
+							let glimpseFailure: string | null = null;
 							if (glimpseOpenFn) {
 								try {
 									glimpseWin = openInGlimpse(
@@ -1492,13 +1568,26 @@ export default function (pi: ExtensionAPI) {
 										await emitHint({ status: "opened-on-host" });
 									}
 									return;
-								} catch {
+								} catch (err) {
 									glimpseWin = null;
+									glimpseFailure = describeLaunchFailure("glimpse window", err);
 								}
 							}
 							let openOutcome: BrowserOpenOutcome = { status: "opened-on-host" };
 							try {
-								await openUrl(pi, url, settings.browser);
+								if (settings.launcher === "orca") {
+									await openOrcaUrl(pi, url, ctx.cwd);
+								} else if (settings.launcher === "glimpse") {
+									throw new Error(
+										describeGlimpseUnavailable(
+											glimpseFailure ?? glimpseLoadError,
+											os.platform(),
+											isRemoteSession(),
+										),
+									);
+								} else {
+									await openUrl(pi, url, settings.browser);
+								}
 							} catch (err) {
 								if (resolved) return;
 								openOutcome = {

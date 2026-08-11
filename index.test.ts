@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startInterviewServer, type ResponseItem } from "./server.ts";
@@ -18,8 +18,12 @@ import interviewExtension, {
 	selectGenerateModels,
 	buildAskModelsData,
 	openLinuxUrl,
+	openOrcaUrl,
+	shouldAttemptGlimpse,
+	describeGlimpseUnavailable,
 } from "./index.ts";
 import { validateQuestions, type Question } from "./schema.ts";
+import { assertValidLauncher, loadSettings } from "./settings.ts";
 
 const fetch: typeof globalThis.fetch = (input, init) => {
 	const headers = new Headers(init?.headers);
@@ -120,6 +124,161 @@ describe("openLinuxUrl", () => {
 			),
 		).rejects.toThrow(
 			/xdg-open missing.*sensible-browser missing.*gio missing.*killed \(exit code 7\).*stderr detail.*stdout detail/s,
+		);
+	});
+});
+
+describe("openOrcaUrl", () => {
+	const url = "http://127.0.0.1:1234/interview";
+	const cwd = "/Users/example/project";
+
+	it("creates and focuses an Orca browser tab in the current worktree", async () => {
+		const calls: { command: string; args: string[]; cwd: string | undefined; timeout: number | undefined }[] = [];
+
+		await openOrcaUrl(
+			{
+				exec: async (command, args, options) => {
+					calls.push({ command, args, cwd: options?.cwd, timeout: options?.timeout });
+					if (args[1] === "create") {
+						return {
+							stdout: JSON.stringify({ result: { browserPageId: "page-123" } }),
+							stderr: "",
+							code: 0,
+							killed: false,
+						};
+					}
+					return { stdout: "", stderr: "", code: 0, killed: false };
+				},
+			},
+			url,
+			cwd,
+		);
+
+		expect(calls).toEqual([
+			{
+				command: "orca",
+				args: ["tab", "create", "--url", url, "--json"],
+				cwd,
+				timeout: 60_000,
+			},
+			{
+				command: "orca",
+				args: ["tab", "switch", "--page", "page-123", "--focus"],
+				cwd,
+				timeout: undefined,
+			},
+		]);
+	});
+
+	it("rejects a tab creation response without a page id before switching", async () => {
+		let calls = 0;
+		await expect(openOrcaUrl(
+			{
+				exec: async () => {
+					calls += 1;
+					return { stdout: "{}", stderr: "", code: 0, killed: false };
+				},
+			},
+			url,
+			cwd,
+		)).rejects.toThrow("orca tab create returned no browserPageId: {}");
+		expect(calls).toBe(1);
+	});
+
+	it("surfaces a tab focus failure", async () => {
+		let calls = 0;
+		await expect(openOrcaUrl(
+			{
+				exec: async () => {
+					calls += 1;
+					return calls === 1
+						? {
+							stdout: JSON.stringify({ result: { browserPageId: "page-123" } }),
+							stderr: "",
+							code: 0,
+							killed: false,
+						}
+						: { stdout: "", stderr: "worktree unavailable", code: 1, killed: false };
+				},
+			},
+			url,
+			cwd,
+		)).rejects.toThrow("orca tab switch: exit code 1: worktree unavailable");
+	});
+});
+
+describe("shouldAttemptGlimpse", () => {
+	it("attempts Glimpse in auto mode and when explicitly selected", () => {
+		expect(shouldAttemptGlimpse(undefined, "darwin", false)).toBe(true);
+		expect(shouldAttemptGlimpse("glimpse", "darwin", false)).toBe(true);
+	});
+
+	it("never attempts Glimpse for the explicit browser and orca launchers", () => {
+		expect(shouldAttemptGlimpse("browser", "darwin", false)).toBe(false);
+		expect(shouldAttemptGlimpse("orca", "darwin", false)).toBe(false);
+	});
+
+	it("skips Glimpse off macOS and in remote sessions", () => {
+		expect(shouldAttemptGlimpse(undefined, "linux", false)).toBe(false);
+		expect(shouldAttemptGlimpse("glimpse", "darwin", true)).toBe(false);
+	});
+});
+
+describe("assertValidLauncher", () => {
+	it("accepts an absent setting and every supported launcher", () => {
+		expect(() => assertValidLauncher(undefined)).not.toThrow();
+		expect(() => assertValidLauncher("glimpse")).not.toThrow();
+		expect(() => assertValidLauncher("browser")).not.toThrow();
+		expect(() => assertValidLauncher("orca")).not.toThrow();
+	});
+
+	it("rejects unsupported values instead of silently selecting auto behavior", () => {
+		expect(() => assertValidLauncher("orc")).toThrow(
+			'interview.launcher must be one of: glimpse, browser, orca (received "orc")',
+		);
+		expect(() => assertValidLauncher(null)).toThrow("(received null)");
+	});
+});
+
+describe("loadSettings", () => {
+	function writeSettings(interview: unknown): string {
+		const dir = mkdtempSync(join(tmpdir(), "pi-interview-settings-"));
+		const file = join(dir, "settings.json");
+		writeFileSync(file, JSON.stringify({ interview }));
+		return file;
+	}
+
+	it("reads interview settings and rejects an unsupported launcher", () => {
+		expect(loadSettings(writeSettings({ launcher: "orca", timeout: 90 }))).toMatchObject({
+			launcher: "orca",
+			timeout: 90,
+		});
+		expect(() => loadSettings(writeSettings({ launcher: "orc" }))).toThrow(
+			"interview.launcher must be one of: glimpse, browser, orca",
+		);
+	});
+
+	it("returns empty settings when the file is missing", () => {
+		expect(loadSettings(join(tmpdir(), "pi-interview-settings-missing", "settings.json"))).toEqual({});
+	});
+});
+
+describe("describeGlimpseUnavailable", () => {
+	it("prefers a captured failure over the generic causes", () => {
+		expect(describeGlimpseUnavailable("glimpseui import: boom", "darwin", false)).toBe(
+			"Glimpse launcher unavailable: glimpseui import: boom",
+		);
+	});
+
+	it("distinguishes platform, remote session, and missing package causes", () => {
+		expect(describeGlimpseUnavailable(null, "linux", false)).toBe(
+			"Glimpse launcher unavailable: requires macOS",
+		);
+		expect(describeGlimpseUnavailable(null, "darwin", true)).toBe(
+			"Glimpse launcher unavailable: skipped for remote ssh/mosh sessions",
+		);
+		expect(describeGlimpseUnavailable(null, "darwin", false)).toBe(
+			"Glimpse launcher unavailable: install the glimpseui package",
 		);
 	});
 });
