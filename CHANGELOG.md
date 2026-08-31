@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added explicit browser-camera capture for image questions and attachments, including device selection, live preview, capture/retake confirmation, accessible lifecycle controls, and reuse of existing image validation/upload boundaries.
+
 ## [0.11.0] - 2026-08-11
 
 ### Added

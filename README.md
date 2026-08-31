@@ -37,13 +37,19 @@ Restart pi to load the extension.
 - **Save Snapshots**: Save interview state to HTML for later review or revival
 - **Session Status Bar**: Shows project path, git branch, and session ID for identification
 - **Launcher Selection**: Open forms in Glimpse, an Orca tab, or a browser
-- **Image Support**: Drag & drop anywhere on question, file picker, or paste a path into the dedicated path field
+- **Image Support**: Drag & drop anywhere on a question, use the file picker, capture a still from a browser camera, or paste a path into the dedicated path field
 - **Path Normalization**: Handles shell-escaped paths (`\ `) and macOS screenshot filenames (narrow no-break space before AM/PM)
 - **Generate & Review Options**: Single/multi-select questions, including rich-option questions with inline content blocks, show "✦ Generate more" (appends new choices) and "↻ Review options" (reviews options and rewrites the question for clarity) buttons powered by an LLM
 - **Ask About an Option**: Single/multi options, including rich options with inline content blocks, can open an inline assistant panel with prompt chips, freeform follow-up questions, provider/model overrides under Advanced, and auto-saved option analysis
 - **Option Clarifications**: Single/multi options, including rich options with inline content blocks, can reveal a separate inline `Optional clarification...` field when selected, letting users attach a short note to a choice without using `Ask`
 - **Tool Discoverability (pi v0.59+)**: Registers a `promptSnippet` so `interview` remains eligible for inclusion in pi's default `Available tools` prompt section
 - **Themes**: Built-in default + optional light/dark + custom theme CSS
+
+### Camera capture
+
+Image questions and per-question attachments include a **Use camera** action when the form runs in a secure localhost or HTTPS browser context. Opening the dialog does not activate a camera: choose **Start camera**, grant browser permission, select a video input, then capture, retake, and explicitly accept one still image. Standard and virtual cameras—including cameras exposed by tools such as OBSBOT Control Center—appear through the browser's normal device picker without a vendor-specific integration.
+
+Camera capture requests video only (`audio: false`). Live streams stay in the browser, stop on every dialog/session/page teardown path, and are never attached until **Use photo** is selected. Captured JPEGs pass through the same file-count, MIME type, 5 MB, and 4096×4096 validation as uploaded images. Camera positioning remains in the camera's own control application, which can stay open alongside the browser preview. Browsers without secure media-device support show a clear unavailable message while file and path inputs continue to work.
 
 ## How It Works
 

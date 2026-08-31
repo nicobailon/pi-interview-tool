@@ -660,6 +660,53 @@ describe("loadSavedInterview", () => {
 	});
 });
 
+describe("privacy-safe camera capture", () => {
+		it("keeps camera activation explicit and routes stills through normal image validation", () => {
+			const clientSource = readFileSync("form/script.js", "utf-8");
+
+			expect(clientSource).toContain('button.textContent = "Use camera";');
+			expect(clientSource).toContain('class="btn-primary camera-start-btn">Start camera</button>');
+			expect(clientSource).toContain('navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false })');
+			expect(clientSource).toContain('new File([blob], `camera-${stamp}.jpg`');
+			expect(clientSource).toContain("await checkImageFile(operation.target.questionId, operation.file)");
+			expect(clientSource).toContain("operation.target.manager.addFile(operation.target.questionId, operation.file)");
+			expect(clientSource).toContain("createCameraButton(question.id, questionImages)");
+			expect(clientSource).toContain("createCameraButton(question.id, attachments");
+			expect(clientSource).toContain("if (!window.isSecureContext)");
+			expect(clientSource).toContain("cameraCaptureState.selectedDeviceId = selected?.deviceId || \"\";");
+			expect(clientSource).toContain("captureBtn.focus();");
+			expect(clientSource).toContain("void populateCameraDevices();");
+			expect(clientSource).toContain("Choose Switch camera to apply it.");
+			expect(clientSource).toContain("} else if (isCameraButton(option)) {\n            option.click();");
+		});
+
+		it("stops camera tracks on stale requests and every page/session teardown path", () => {
+			const clientSource = readFileSync("form/script.js", "utf-8");
+			const teardownCalls = clientSource.match(/closeCameraCapture\(\{ restoreFocus: false \}\);/g) ?? [];
+
+			expect(clientSource).toContain("stream.getTracks().forEach((track) => track.stop());");
+			expect(clientSource).toContain("requestId !== cameraCaptureState.requestId");
+			expect(clientSource).toContain("if (!isCurrentCameraOperation(operation)) return;");
+			expect(clientSource).toContain("useBtn.disabled = true;");
+			expect(clientSource).toContain("retakeBtn.disabled = true;");
+			expect(clientSource).toContain("operation.file !== cameraCaptureState.pendingFile");
+			expect(clientSource).toContain("function retakeCameraFrame() {\n    const overlay = cameraCaptureState.overlay;\n    if (!overlay || !cameraCaptureState.stream) return;\n    cameraCaptureState.requestId += 1;");
+			expect(teardownCalls.length).toBeGreaterThanOrEqual(7);
+			expect(clientSource).toContain('window.addEventListener("pagehide", (event) => {\n      closeCameraCapture({ restoreFocus: false });');
+		});
+
+		it("uses an accessible responsive dialog with existing design tokens", () => {
+			const clientSource = readFileSync("form/script.js", "utf-8");
+			const styles = readFileSync("form/styles.css", "utf-8");
+
+			expect(clientSource).toContain('role="dialog" aria-modal="true"');
+			expect(clientSource).toContain('class="camera-capture-status" role="status" aria-live="polite"');
+			expect(clientSource).toContain("trapCameraFocus(event, dialog)");
+			expect(styles).toMatch(/\.camera-capture-dialog \{[^}]*background: var\(--bg-card\);[^}]*border: 1px solid var\(--border-focus\);/s);
+			expect(styles).toContain("@media (max-width: 640px)");
+		});
+});
+
 describe("content rendering styles", () => {
 	it("wraps long lines in live interview code blocks", () => {
 		const styles = readFileSync("form/styles.css", "utf-8");
@@ -793,6 +840,65 @@ describe("server binding", () => {
 });
 
 describe("image upload boundaries", () => {
+	it("accepts camera-named JPEGs as image answers and attachments", async () => {
+		const sessionId = `camera-upload-${process.pid}-${Date.now()}`;
+		const bytes = Buffer.from(
+			"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVL//2Q==",
+			"base64",
+		);
+		expect(bytes.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+		let resolveSubmitted!: (responses: ResponseItem[]) => void;
+		const submitted = new Promise<ResponseItem[]>((resolve) => {
+			resolveSubmitted = resolve;
+		});
+		const handle = await startInterviewServer(
+			{
+				questions: {
+					title: "Camera transport",
+					questions: [
+						{ id: "photo", type: "image", question: "Take a photo" },
+						{ id: "notes", type: "text", question: "Notes" },
+					],
+				},
+				sessionToken: "camera-upload-token",
+				sessionId,
+				cwd: process.cwd(),
+				timeout: 600,
+			},
+			{ onSubmit: resolveSubmitted, onCancel: () => {} },
+		);
+
+		try {
+			const response = await fetch(new URL("/submit", handle.url), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					token: "camera-upload-token",
+					responses: [
+						{ id: "photo", value: "" },
+						{ id: "notes", value: "Physical evidence" },
+					],
+					images: [
+						{ id: "photo", filename: "camera-panel.jpg", mimeType: "image/jpeg", data: bytes.toString("base64") },
+						{ id: "notes", filename: "camera-context.jpg", mimeType: "image/jpeg", data: bytes.toString("base64"), isAttachment: true },
+					],
+				}),
+			});
+			expect(response.status).toBe(200);
+
+			const responses = await submitted;
+			const photoValue = responses.find((item) => item.id === "photo")?.value;
+			const attachmentPath = responses.find((item) => item.id === "notes")?.attachments?.[0];
+			expect(typeof photoValue).toBe("string");
+			expect(attachmentPath).toBeTruthy();
+			expect(readFileSync(photoValue as string)).toEqual(bytes);
+			expect(readFileSync(attachmentPath!)).toEqual(bytes);
+		} finally {
+			handle.close();
+			rmSync(join(tmpdir(), `pi-interview-${sessionId}`), { recursive: true, force: true });
+		}
+	});
+
 	it.each(["/submit", "/save"])("rejects non-attachment images for choice questions on %s", async (pathname) => {
 		const handle = await startInterviewServer(
 			{

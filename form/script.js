@@ -41,6 +41,17 @@
   const imagePathState = new Map();
   const attachState = new Map();
   const attachPathState = new Map();
+  const cameraCaptureState = {
+    overlay: null,
+    stream: null,
+    requestId: 0,
+    pendingFile: null,
+    pendingUrl: null,
+    opener: null,
+    target: null,
+    selectedDeviceId: "",
+    startPending: false,
+  };
   const optionKeyState = new Map();
   const choiceNoteState = new Map();
   const optionInsightState = {
@@ -72,6 +83,7 @@
     queuePoll: null,
   };
   function closeWindow() {
+    closeCameraCapture({ restoreFocus: false });
     if (window.glimpse && typeof window.glimpse.close === "function") {
       window.glimpse.close();
     } else {
@@ -190,6 +202,7 @@
 
   function showSessionExpired() {
     if (session.expired) return;
+    closeCameraCapture({ restoreFocus: false });
     session.expired = true;
     session.tickLoopRunning = false;
     if (timers.countdownDisplay) {
@@ -373,6 +386,7 @@
   }
 
   function sendCancelBeacon(reason) {
+    closeCameraCapture({ restoreFocus: false });
     if (session.cancelSent || session.ended) return;
     session.cancelSent = true;
     const responses = collectResponses();
@@ -391,6 +405,7 @@
   }
 
   async function cancelInterview(reason) {
+    closeCameraCapture({ restoreFocus: false });
     if (session.ended) return;
     session.ended = true;
     session.cancelSent = true;
@@ -2241,10 +2256,12 @@
     const inputs = Array.from(card.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
     const dropzone = card.querySelector('.file-dropzone');
     const pathInput = card.querySelector('.image-path-input');
+    const cameraButton = card.querySelector('.file-input .camera-open-btn');
     const doneItem = card.querySelector('.done-item');
     
     const items = [...inputs];
     if (dropzone) items.push(dropzone);
+    if (cameraButton) items.push(cameraButton);
     if (pathInput) items.push(pathInput);
     if (doneItem) items.push(doneItem);
     
@@ -2253,7 +2270,7 @@
 
   function getTabStopsForCard(card) {
     return Array.from(
-      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .image-path-input, .done-item')
+      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .file-input .camera-open-btn, .image-path-input, .done-item')
     );
   }
 
@@ -2263,6 +2280,10 @@
 
   function isDropzone(el) {
     return el && el.classList.contains('file-dropzone');
+  }
+
+  function isCameraButton(el) {
+    return el && el.classList.contains('camera-open-btn');
   }
 
   function isOptionInput(el) {
@@ -2529,6 +2550,8 @@
               const fileInput = card.querySelector('input[type="file"]');
               if (fileInput) fileInput.click();
             }
+          } else if (isCameraButton(option)) {
+            option.click();
           } else if (option.type === 'radio') {
             option.checked = true;
             debounceSave();
@@ -2960,8 +2983,13 @@
       
       setupDropzone(dropzone, input);
 
+      const sourceActions = document.createElement("div");
+      sourceActions.className = "image-source-actions";
+      sourceActions.appendChild(createCameraButton(question.id, questionImages));
+
       wrapper.appendChild(input);
       wrapper.appendChild(dropzone);
+      wrapper.appendChild(sourceActions);
       wrapper.appendChild(pathInput);
       wrapper.appendChild(selectedItems);
       card.appendChild(wrapper);
@@ -2992,6 +3020,10 @@
       attachDrop.className = "attach-inline-drop";
       attachDrop.setAttribute("tabindex", "0");
       attachDrop.textContent = "Drop image or click";
+
+      const attachCameraBtn = createCameraButton(question.id, attachments, {
+        onAccept: () => revealAttachmentArea(question.id),
+      });
       
       const attachPath = document.createElement("input");
       attachPath.type = "text";
@@ -3032,7 +3064,7 @@
           if (e.shiftKey) {
             attachBtn.focus();
           } else {
-            attachPath.focus();
+            attachCameraBtn.focus();
           }
         }
         if (e.key === "Escape") {
@@ -3051,7 +3083,7 @@
         if (e.key === "Tab") {
           e.preventDefault();
           if (e.shiftKey) {
-            attachDrop.focus();
+            attachCameraBtn.focus();
           } else {
             attachBtn.click();
             attachBtn.focus();
@@ -3065,6 +3097,7 @@
       
       attachInline.appendChild(attachFileInput);
       attachInline.appendChild(attachDrop);
+      attachInline.appendChild(attachCameraBtn);
       attachInline.appendChild(attachPath);
       attachInline.appendChild(attachItems);
       
@@ -3162,6 +3195,447 @@
     return { valid: true };
   }
 
+  function cameraUnavailableMessage() {
+    if (!window.isSecureContext) {
+      return "Camera capture requires a secure localhost or HTTPS page.";
+    }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      return "Camera capture is not supported by this browser.";
+    }
+    return "";
+  }
+
+  function cameraErrorMessage(err) {
+    const name = err && typeof err === "object" ? err.name : "";
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      return "Camera permission was denied. Allow access in the browser and try again.";
+    }
+    if (name === "NotFoundError") {
+      return "No camera was found.";
+    }
+    if (name === "NotReadableError" || name === "AbortError") {
+      return "The camera is still waking, busy, or unavailable. Wait a moment and retry, close other camera apps, or select a virtual camera.";
+    }
+    if (name === "OverconstrainedError") {
+      return "The selected camera cannot satisfy the requested video settings.";
+    }
+    return err instanceof Error ? err.message : "Unable to start the camera.";
+  }
+
+  function releaseCameraStream() {
+    const stream = cameraCaptureState.stream;
+    cameraCaptureState.stream = null;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    const video = cameraCaptureState.overlay?.querySelector(".camera-preview-video");
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+  }
+
+  function clearCameraStill() {
+    cameraCaptureState.pendingFile = null;
+    if (cameraCaptureState.pendingUrl) {
+      URL.revokeObjectURL(cameraCaptureState.pendingUrl);
+      cameraCaptureState.pendingUrl = null;
+    }
+  }
+
+  function closeCameraCapture(options = {}) {
+    const { restoreFocus = true } = options;
+    cameraCaptureState.requestId += 1;
+    cameraCaptureState.startPending = false;
+    releaseCameraStream();
+    clearCameraStill();
+    if (cameraCaptureState.deviceChangeHandler && typeof navigator.mediaDevices?.removeEventListener === "function") {
+      navigator.mediaDevices.removeEventListener("devicechange", cameraCaptureState.deviceChangeHandler);
+    }
+    const overlay = cameraCaptureState.overlay;
+    const opener = cameraCaptureState.opener;
+    cameraCaptureState.overlay = null;
+    cameraCaptureState.opener = null;
+    cameraCaptureState.target = null;
+    cameraCaptureState.deviceChangeHandler = null;
+    overlay?.remove();
+    document.body.classList.remove("camera-capture-open");
+    if (restoreFocus && opener?.isConnected) opener.focus();
+  }
+
+  function setCameraStatus(message, kind = "info") {
+    const status = cameraCaptureState.overlay?.querySelector(".camera-capture-status");
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.kind = kind;
+  }
+
+  async function populateCameraDevices() {
+    const overlay = cameraCaptureState.overlay;
+    const select = overlay?.querySelector(".camera-device-select");
+    if (!select || !navigator.mediaDevices?.enumerateDevices) return;
+
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices())
+        .filter((device) => device.kind === "videoinput");
+      if (!cameraCaptureState.overlay || select !== cameraCaptureState.overlay.querySelector(".camera-device-select")) return;
+
+      const activeId = cameraCaptureState.stream?.getVideoTracks()[0]?.getSettings().deviceId || "";
+      const preferredId = cameraCaptureState.selectedDeviceId || select.value || activeId;
+      const selected = devices.find((device) => device.deviceId === preferredId) ||
+        devices.find((device) => device.deviceId === activeId) || devices[0];
+      select.replaceChildren();
+      devices.forEach((device, index) => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.textContent = device.label || `Camera ${index + 1}`;
+        option.selected = device.deviceId === selected?.deviceId;
+        select.appendChild(option);
+      });
+      cameraCaptureState.selectedDeviceId = selected?.deviceId || "";
+      select.disabled = devices.length === 0 || cameraCaptureState.startPending;
+      if (devices.length === 0) {
+        const option = document.createElement("option");
+        option.textContent = "No cameras found";
+        select.appendChild(option);
+      }
+    } catch (err) {
+      setCameraStatus(cameraErrorMessage(err), "error");
+    }
+  }
+
+  async function startCameraStream(deviceId = cameraCaptureState.selectedDeviceId) {
+    const overlay = cameraCaptureState.overlay;
+    if (!overlay || !cameraCaptureState.target) return;
+
+    const requestId = ++cameraCaptureState.requestId;
+    const startBtn = overlay.querySelector(".camera-start-btn");
+    const captureBtn = overlay.querySelector(".camera-take-btn");
+    const deviceSelect = overlay.querySelector(".camera-device-select");
+    const video = overlay.querySelector(".camera-preview-video");
+    const selectedLabel = deviceSelect.selectedOptions[0]?.textContent || "camera";
+    cameraCaptureState.selectedDeviceId = deviceId || "";
+    cameraCaptureState.startPending = true;
+    releaseCameraStream();
+    clearCameraStill();
+    startBtn.disabled = true;
+    deviceSelect.disabled = true;
+    captureBtn.disabled = true;
+    video.classList.add("hidden");
+    setCameraStatus(`Starting ${selectedLabel}… Some cameras take a few seconds to wake.`);
+
+    const videoConstraints = deviceId
+      ? { deviceId: { exact: deviceId }, width: { ideal: 1920, max: MAX_DIMENSION }, height: { ideal: 1080, max: MAX_DIMENSION } }
+      : { width: { ideal: 1920, max: MAX_DIMENSION }, height: { ideal: 1080, max: MAX_DIMENSION } };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+      if (requestId !== cameraCaptureState.requestId || !cameraCaptureState.overlay) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      cameraCaptureState.stream = stream;
+      const track = stream.getVideoTracks()[0];
+      cameraCaptureState.selectedDeviceId = track?.getSettings().deviceId || cameraCaptureState.selectedDeviceId;
+      video.srcObject = stream;
+      video.classList.remove("hidden");
+      await video.play();
+      if (requestId !== cameraCaptureState.requestId || overlay !== cameraCaptureState.overlay) return;
+      track?.addEventListener("ended", () => {
+        if (cameraCaptureState.stream !== stream) return;
+        captureBtn.disabled = true;
+        setCameraStatus("The camera stopped. Start it again to continue.", "error");
+      }, { once: true });
+      startBtn.textContent = "Switch / restart camera";
+      captureBtn.disabled = false;
+      setCameraStatus("Camera preview is live. Capture is ready; video stays local until you choose Use photo.", "success");
+      captureBtn.focus();
+      void populateCameraDevices();
+    } catch (err) {
+      if (requestId !== cameraCaptureState.requestId) return;
+      releaseCameraStream();
+      captureBtn.disabled = true;
+      setCameraStatus(cameraErrorMessage(err), "error");
+    } finally {
+      if (requestId === cameraCaptureState.requestId && cameraCaptureState.overlay) {
+        cameraCaptureState.startPending = false;
+        startBtn.disabled = false;
+        void populateCameraDevices();
+      }
+    }
+  }
+
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("The browser could not encode the captured frame."));
+      }, type, quality);
+    });
+  }
+
+  function isCurrentCameraOperation(operation) {
+    return operation.requestId === cameraCaptureState.requestId &&
+      operation.overlay === cameraCaptureState.overlay &&
+      operation.target === cameraCaptureState.target;
+  }
+
+  async function captureCameraFrame() {
+    const operation = {
+      requestId: cameraCaptureState.requestId,
+      overlay: cameraCaptureState.overlay,
+      target: cameraCaptureState.target,
+    };
+    const video = operation.overlay?.querySelector(".camera-preview-video");
+    const takeBtn = operation.overlay?.querySelector(".camera-take-btn");
+    if (!operation.overlay || !operation.target || !video || !takeBtn || !cameraCaptureState.stream) return;
+    if (!video.videoWidth || !video.videoHeight) {
+      setCameraStatus("The camera preview is not ready yet.", "error");
+      return;
+    }
+
+    takeBtn.disabled = true;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("The browser could not prepare the camera canvas.");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+      if (!isCurrentCameraOperation(operation)) return;
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const file = new File([blob], `camera-${stamp}.jpg`, {
+        type: "image/jpeg",
+        lastModified: Date.now(),
+      });
+      const validation = await validateImage(file);
+      if (!isCurrentCameraOperation(operation)) return;
+      if (!validation.valid) {
+        setCameraStatus(validation.error, "error");
+        return;
+      }
+
+      clearCameraStill();
+      cameraCaptureState.pendingFile = file;
+      cameraCaptureState.pendingUrl = URL.createObjectURL(file);
+      const still = operation.overlay.querySelector(".camera-captured-image");
+      still.src = cameraCaptureState.pendingUrl;
+      still.classList.remove("hidden");
+      video.classList.add("hidden");
+      video.pause();
+      takeBtn.classList.add("hidden");
+      const retakeBtn = operation.overlay.querySelector(".camera-retake-btn");
+      const useBtn = operation.overlay.querySelector(".camera-use-btn");
+      retakeBtn.disabled = false;
+      useBtn.disabled = false;
+      retakeBtn.classList.remove("hidden");
+      useBtn.classList.remove("hidden");
+      setCameraStatus(`Captured ${canvas.width}×${canvas.height} JPEG (${Math.ceil(file.size / 1024)} KB). Review it before use.`, "success");
+      operation.overlay.querySelector(".camera-use-btn").focus();
+    } catch (err) {
+      if (isCurrentCameraOperation(operation)) {
+        setCameraStatus(cameraErrorMessage(err), "error");
+      }
+    } finally {
+      if (isCurrentCameraOperation(operation) && !cameraCaptureState.pendingFile) {
+        takeBtn.disabled = false;
+      }
+    }
+  }
+
+  function retakeCameraFrame() {
+    const overlay = cameraCaptureState.overlay;
+    if (!overlay || !cameraCaptureState.stream) return;
+    cameraCaptureState.requestId += 1;
+    clearCameraStill();
+    const video = overlay.querySelector(".camera-preview-video");
+    const takeBtn = overlay.querySelector(".camera-take-btn");
+    overlay.querySelector(".camera-captured-image").classList.add("hidden");
+    video.classList.remove("hidden");
+    video.play().catch((err) => setCameraStatus(cameraErrorMessage(err), "error"));
+    overlay.querySelector(".camera-retake-btn").classList.add("hidden");
+    overlay.querySelector(".camera-use-btn").classList.add("hidden");
+    takeBtn.disabled = false;
+    takeBtn.classList.remove("hidden");
+    setCameraStatus("Camera preview is live. Capture when ready.", "success");
+  }
+
+  async function checkImageFile(questionId, file) {
+    if (countUploadedFiles(questionId) + 1 > MAX_IMAGES) {
+      return { valid: false, error: `Only ${MAX_IMAGES} images allowed.` };
+    }
+
+    try {
+      return await validateImage(file);
+    } catch (err) {
+      return {
+        valid: false,
+        error: err instanceof Error ? err.message : "Failed to validate image.",
+      };
+    }
+  }
+
+  async function acceptImageFile(questionId, file, manager) {
+    const result = await checkImageFile(questionId, file);
+    if (!result.valid) {
+      setFieldError(questionId, result.error);
+      return result;
+    }
+    setFieldError(questionId, "");
+    manager.addFile(questionId, file);
+    return result;
+  }
+
+  async function useCameraFrame() {
+    const operation = {
+      requestId: cameraCaptureState.requestId,
+      overlay: cameraCaptureState.overlay,
+      target: cameraCaptureState.target,
+      file: cameraCaptureState.pendingFile,
+    };
+    const useBtn = operation.overlay?.querySelector(".camera-use-btn");
+    const retakeBtn = operation.overlay?.querySelector(".camera-retake-btn");
+    if (!operation.overlay || !operation.target || !operation.file || !useBtn || !retakeBtn) return;
+
+    useBtn.disabled = true;
+    retakeBtn.disabled = true;
+    const result = await checkImageFile(operation.target.questionId, operation.file);
+    if (!isCurrentCameraOperation(operation) || operation.file !== cameraCaptureState.pendingFile) return;
+    if (!result.valid) {
+      setFieldError(operation.target.questionId, result.error);
+      setCameraStatus(result.error || "Captured image was rejected.", "error");
+      useBtn.disabled = false;
+      retakeBtn.disabled = false;
+      return;
+    }
+
+    setFieldError(operation.target.questionId, "");
+    operation.target.manager.addFile(operation.target.questionId, operation.file);
+    operation.target.onAccept?.();
+    closeCameraCapture();
+  }
+
+  function trapCameraFocus(event, dialog) {
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialog.querySelectorAll(
+      'button:not([disabled]):not(.hidden), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((element) => element.offsetParent !== null);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function openCameraCapture(questionId, manager, opener, options = {}) {
+    const unavailable = cameraUnavailableMessage();
+    if (unavailable) {
+      setFieldError(questionId, unavailable);
+      return;
+    }
+
+    closeCameraCapture({ restoreFocus: false });
+    setFieldError(questionId, "");
+    cameraCaptureState.opener = opener;
+    cameraCaptureState.target = { questionId, manager, onAccept: options.onAccept };
+
+    const overlay = document.createElement("div");
+    overlay.className = "camera-capture-overlay";
+    overlay.innerHTML = `
+      <section class="camera-capture-dialog" role="dialog" aria-modal="true" aria-labelledby="camera-capture-title" aria-describedby="camera-capture-help">
+        <header class="camera-capture-header">
+          <div>
+            <h2 id="camera-capture-title">Capture an image</h2>
+            <p id="camera-capture-help">Choose Start camera, select a video input such as OBSBOT Virtual Camera, then capture and review one still image.</p>
+          </div>
+          <button type="button" class="camera-close-btn" aria-label="Close camera">×</button>
+        </header>
+        <div class="camera-device-row">
+          <label for="camera-device-select">Camera</label>
+          <select id="camera-device-select" class="camera-device-select" disabled>
+            <option>Looking for cameras…</option>
+          </select>
+          <button type="button" class="btn-primary camera-start-btn">Start camera</button>
+        </div>
+        <div class="camera-preview-shell">
+          <div class="camera-preview-placeholder">Camera is off</div>
+          <video class="camera-preview-video hidden" autoplay muted playsinline></video>
+          <img class="camera-captured-image hidden" alt="Captured camera still preview">
+        </div>
+        <p class="camera-capture-privacy">No audio is requested. Nothing is attached until you choose Use photo.</p>
+        <p class="camera-capture-status" role="status" aria-live="polite">Camera access has not started.</p>
+        <footer class="camera-capture-actions">
+          <button type="button" class="btn-secondary camera-cancel-btn">Cancel</button>
+          <button type="button" class="btn-secondary camera-retake-btn hidden">Retake</button>
+          <button type="button" class="btn-primary camera-take-btn" disabled>Capture</button>
+          <button type="button" class="btn-primary camera-use-btn hidden">Use photo</button>
+        </footer>
+      </section>`;
+
+    cameraCaptureState.overlay = overlay;
+    document.body.classList.add("camera-capture-open");
+    document.body.appendChild(overlay);
+    const dialog = overlay.querySelector(".camera-capture-dialog");
+    const startBtn = overlay.querySelector(".camera-start-btn");
+    const deviceSelect = overlay.querySelector(".camera-device-select");
+    const close = () => closeCameraCapture();
+
+    overlay.querySelector(".camera-close-btn").addEventListener("click", close);
+    overlay.querySelector(".camera-cancel-btn").addEventListener("click", close);
+    overlay.querySelector(".camera-take-btn").addEventListener("click", captureCameraFrame);
+    overlay.querySelector(".camera-retake-btn").addEventListener("click", retakeCameraFrame);
+    overlay.querySelector(".camera-use-btn").addEventListener("click", useCameraFrame);
+    startBtn.addEventListener("click", () => startCameraStream(cameraCaptureState.selectedDeviceId));
+    deviceSelect.addEventListener("change", () => {
+      cameraCaptureState.selectedDeviceId = deviceSelect.value;
+      if (cameraCaptureState.stream) {
+        startBtn.textContent = "Switch camera";
+        setCameraStatus(`Selected ${deviceSelect.selectedOptions[0]?.textContent || "camera"}. Choose Switch camera to apply it.`);
+      }
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+        return;
+      }
+      trapCameraFocus(event, dialog);
+      event.stopPropagation();
+    });
+    if (typeof navigator.mediaDevices.addEventListener === "function") {
+      cameraCaptureState.deviceChangeHandler = () => populateCameraDevices();
+      navigator.mediaDevices.addEventListener("devicechange", cameraCaptureState.deviceChangeHandler);
+    }
+    void populateCameraDevices();
+    startBtn.focus();
+  }
+
+  function createCameraButton(questionId, manager, options = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn-secondary camera-open-btn";
+    button.textContent = "Use camera";
+    const unavailable = cameraUnavailableMessage();
+    if (unavailable) {
+      button.classList.add("camera-unavailable");
+      button.title = unavailable;
+    }
+    button.addEventListener("click", () => openCameraCapture(questionId, manager, button, options));
+    return button;
+  }
+
   function clearImage(id) {
     const input = document.querySelector(
       `input[type="file"][data-question-id="${escapeSelector(id)}"]`
@@ -3182,27 +3656,8 @@
       return;
     }
 
-    if (countUploadedFiles(questionId) + 1 > MAX_IMAGES) {
-      setFieldError(questionId, `Only ${MAX_IMAGES} images allowed.`);
-      input.value = "";
-      return;
-    }
-
-    try {
-      const validation = await validateImage(file);
-      if (!validation.valid) {
-        setFieldError(questionId, validation.error);
-        input.value = "";
-        return;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to validate image.";
-      setFieldError(questionId, message);
-      input.value = "";
-      return;
-    }
-
-    manager.addFile(questionId, file);
+    const result = await acceptImageFile(questionId, file, manager);
+    if (!result.valid) input.value = "";
   }
 
   function revealAttachmentArea(questionId) {
@@ -3214,31 +3669,11 @@
   }
 
   async function addDroppedImage(question, file) {
-    if (countUploadedFiles(question.id) + 1 > MAX_IMAGES) {
-      setFieldError(question.id, `Only ${MAX_IMAGES} images allowed.`);
-      return;
+    const manager = question.type === "image" ? questionImages : attachments;
+    const result = await acceptImageFile(question.id, file, manager);
+    if (result.valid && question.type !== "image") {
+      revealAttachmentArea(question.id);
     }
-
-    try {
-      const validation = await validateImage(file);
-      if (!validation.valid) {
-        setFieldError(question.id, validation.error);
-        return;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to validate image.";
-      setFieldError(question.id, message);
-      return;
-    }
-
-    setFieldError(question.id, "");
-    if (question.type === "image") {
-      questionImages.addFile(question.id, file);
-      return;
-    }
-
-    revealAttachmentArea(question.id);
-    attachments.addFile(question.id, file);
   }
 
   function countUploadedFiles(excludingId) {
@@ -3667,6 +4102,7 @@
 
   async function submitForm(event) {
     event.preventDefault();
+    closeCameraCapture({ restoreFocus: false });
     clearGlobalError();
     clearFieldErrors();
 
@@ -3809,6 +4245,7 @@
         queueOpenBtn.disabled = !queueSessionSelect.value || selectedOption?.disabled;
       });
       queueOpenBtn.addEventListener("click", () => {
+        closeCameraCapture({ restoreFocus: false });
         const url = queueSessionSelect.value;
         if (!url) return;
         const selectedOption = queueSessionSelect.options[queueSessionSelect.selectedIndex];
@@ -3820,6 +4257,7 @@
       });
     }
     window.addEventListener("pagehide", (event) => {
+      closeCameraCapture({ restoreFocus: false });
       if (session.ended) return;
       if (event.persisted) return;
       if (hasReloadIntent()) return;
