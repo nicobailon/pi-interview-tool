@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Added browser camera capture for image questions and per-question attachments. Camera access starts only after an explicit action.
+- Thanks to [@tryingET](https://github.com/tryingET) for #21.
+
 ## [0.11.0] - 2026-08-11
 
 ### Added

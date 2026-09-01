@@ -31,6 +31,7 @@
   const queueToastClose = queueToast?.querySelector(".queue-toast-close");
   const queueSessionSelect = document.getElementById("queue-session-select");
   const queueOpenBtn = document.getElementById("queue-open-btn");
+  const cameraDialog = document.getElementById("camera-dialog");
 
   const MAX_SIZE = 5 * 1024 * 1024;
   const MAX_DIMENSION = 4096;
@@ -41,6 +42,14 @@
   const imagePathState = new Map();
   const attachState = new Map();
   const attachPathState = new Map();
+  const cameraState = {
+    requestId: 0,
+    stream: null,
+    target: null,
+    opener: null,
+    pendingFile: null,
+    pendingUrl: null,
+  };
   const optionKeyState = new Map();
   const choiceNoteState = new Map();
   const optionInsightState = {
@@ -72,6 +81,7 @@
     queuePoll: null,
   };
   function closeWindow() {
+    closeCameraCapture({ restoreFocus: false });
     if (window.glimpse && typeof window.glimpse.close === "function") {
       window.glimpse.close();
     } else {
@@ -190,6 +200,7 @@
 
   function showSessionExpired() {
     if (session.expired) return;
+    closeCameraCapture({ restoreFocus: false });
     session.expired = true;
     session.tickLoopRunning = false;
     if (timers.countdownDisplay) {
@@ -391,6 +402,7 @@
   }
 
   async function cancelInterview(reason) {
+    closeCameraCapture({ restoreFocus: false });
     if (session.ended) return;
     session.ended = true;
     session.cancelSent = true;
@@ -2240,11 +2252,13 @@
   function getOptionsForCard(card) {
     const inputs = Array.from(card.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
     const dropzone = card.querySelector('.file-dropzone');
+    const cameraButton = card.querySelector('.file-input .camera-open-btn');
     const pathInput = card.querySelector('.image-path-input');
     const doneItem = card.querySelector('.done-item');
     
     const items = [...inputs];
     if (dropzone) items.push(dropzone);
+    if (cameraButton) items.push(cameraButton);
     if (pathInput) items.push(pathInput);
     if (doneItem) items.push(doneItem);
     
@@ -2253,7 +2267,7 @@
 
   function getTabStopsForCard(card) {
     return Array.from(
-      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .image-path-input, .done-item')
+      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .file-input .camera-open-btn, .image-path-input, .done-item')
     );
   }
 
@@ -2265,6 +2279,215 @@
     return el && el.classList.contains('file-dropzone');
   }
 
+  const cameraEl = (selector) => cameraDialog?.querySelector(selector);
+
+  function stopCameraTracks(stream) { stream?.getTracks().forEach((track) => track.stop()); }
+
+  function stopCameraStream() {
+    const stream = cameraState.stream;
+    cameraState.stream = null;
+    stopCameraTracks(stream);
+    const video = cameraEl(".camera-preview-video");
+    video?.pause();
+    if (video) video.srcObject = null;
+  }
+
+  function clearCameraStill() {
+    if (cameraState.pendingUrl) URL.revokeObjectURL(cameraState.pendingUrl);
+    cameraState.pendingUrl = cameraState.pendingFile = null;
+    const image = cameraEl(".camera-captured-image");
+    if (image) { image.removeAttribute("src"); image.classList.add("hidden"); }
+  }
+
+  function setCameraStatus(message) {
+    const status = cameraEl(".camera-dialog-status");
+    if (status) status.textContent = message;
+  }
+
+  function resetCameraDialog() {
+    const select = cameraEl(".camera-device-row select");
+    select.innerHTML = '<option value="">Default camera</option>';
+    select.disabled = true;
+    cameraEl(".camera-start-btn").textContent = "Start camera";
+    cameraEl(".camera-start-btn").disabled = false;
+    cameraEl(".camera-take-btn").disabled = true;
+    cameraEl(".camera-take-btn").classList.remove("hidden");
+    cameraEl(".camera-retake-btn").classList.add("hidden");
+    cameraEl(".camera-use-btn").classList.add("hidden");
+    cameraEl(".camera-preview-placeholder").classList.remove("hidden"); cameraEl(".camera-preview-video").classList.add("hidden");
+    setCameraStatus("Camera access has not started.");
+  }
+
+  function closeCameraCapture({ restoreFocus = true } = {}) {
+    const opener = cameraState.opener;
+    cameraState.requestId++;
+    stopCameraStream();
+    clearCameraStill();
+    cameraState.target = cameraState.opener = null;
+    if (cameraDialog?.open) cameraDialog.close();
+    if (restoreFocus && opener?.isConnected) opener.focus();
+  }
+
+  function isCurrentCameraOperation(operation) {
+    return cameraDialog?.open === true && cameraState.requestId === operation.requestId && cameraState.target === operation.target;
+  }
+
+  async function updateCameraDevices(requestId) {
+    const select = cameraEl(".camera-device-row select");
+    if (!select || typeof navigator.mediaDevices?.enumerateDevices !== "function") return;
+    try {
+      const selectedId = select.value;
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
+      if (!cameraDialog?.open || cameraState.requestId !== requestId) return;
+      const activeId = cameraState.stream?.getVideoTracks()[0]?.getSettings().deviceId || "";
+      select.innerHTML = '<option value="">Default camera</option>';
+      devices.forEach((device, index) => select.append(new Option(device.label || `Camera ${index + 1}`, device.deviceId)));
+      if (activeId && devices.some((device) => device.deviceId === activeId)) select.value = activeId;
+      else if (selectedId && devices.some((device) => device.deviceId === selectedId)) select.value = selectedId;
+      select.disabled = false;
+    } catch (_err) {
+      if (cameraDialog?.open && cameraState.requestId === requestId) setCameraStatus("Unable to list video inputs. The default camera can still be used.");
+    }
+  }
+
+  async function startCameraStream() {
+    if (!cameraDialog?.open || !cameraState.target) return;
+    const requestId = ++cameraState.requestId;
+    const select = cameraEl(".camera-device-row select");
+    const start = cameraEl(".camera-start-btn");
+    const capture = cameraEl(".camera-take-btn");
+    const video = cameraEl(".camera-preview-video");
+    const placeholder = cameraEl(".camera-preview-placeholder");
+    if (!select || !start || !capture || !video || !placeholder) return;
+    const deviceId = select.value;
+    stopCameraStream();
+    clearCameraStill();
+    start.disabled = select.disabled = capture.disabled = true;
+    capture.classList.remove("hidden");
+    cameraDialog.querySelectorAll(".camera-retake-btn, .camera-use-btn").forEach((button) => button.classList.add("hidden"));
+    placeholder.classList.add("hidden");
+    video.classList.remove("hidden");
+    setCameraStatus("Starting camera…");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId } } : true, audio: false });
+      if (!cameraDialog.open || cameraState.requestId !== requestId || !cameraState.target) { stopCameraTracks(stream); return; }
+      cameraState.stream = stream;
+      video.srcObject = stream;
+      await video.play();
+      if (!cameraDialog.open || cameraState.requestId !== requestId || cameraState.stream !== stream) { stopCameraTracks(stream); return; }
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        if (cameraState.stream !== stream) return;
+        stopCameraStream();
+        capture.disabled = true;
+        setCameraStatus("The camera stopped. Start it again to continue.");
+      }, { once: true });
+      start.textContent = "Restart camera"; start.disabled = false;
+      capture.disabled = false;
+      select.disabled = false;
+      setCameraStatus("Camera preview is live. Capture a still when ready.");
+      capture.focus();
+      void updateCameraDevices(requestId);
+    } catch (err) {
+      if (cameraDialog.open && cameraState.requestId === requestId) {
+        stopCameraStream();
+        start.disabled = false;
+        capture.disabled = true;
+        select.disabled = false;
+        placeholder.classList.remove("hidden");
+        video.classList.add("hidden");
+        setCameraStatus(err instanceof Error ? err.message : "Unable to start the camera.");
+      }
+    }
+  }
+
+  async function captureCameraFrame() {
+    const operation = { requestId: cameraState.requestId, target: cameraState.target };
+    const video = cameraEl(".camera-preview-video");
+    const capture = cameraEl(".camera-take-btn");
+    if (!isCurrentCameraOperation(operation) || !video || !capture || !cameraState.stream) return;
+    if (!video.videoWidth || !video.videoHeight) { setCameraStatus("The camera preview is not ready yet."); return; }
+    capture.disabled = true;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("The browser could not prepare the camera canvas.");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      stopCameraStream();
+      const blob = await new Promise((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("The browser could not encode the captured frame.")), "image/jpeg", 0.92));
+      if (!isCurrentCameraOperation(operation)) return;
+      const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+      const validation = await validateImage(file);
+      if (!isCurrentCameraOperation(operation)) return;
+      if (!validation.valid) { setCameraStatus(validation.error); return; }
+      clearCameraStill();
+      cameraState.pendingFile = file;
+      cameraState.pendingUrl = URL.createObjectURL(file);
+      const still = cameraEl(".camera-captured-image");
+      still.src = cameraState.pendingUrl;
+      still.classList.remove("hidden");
+      cameraEl(".camera-preview-placeholder").classList.add("hidden");
+      video.classList.add("hidden");
+      capture.classList.add("hidden");
+      cameraEl(".camera-retake-btn").classList.remove("hidden");
+      const use = cameraEl(".camera-use-btn");
+      use.disabled = false;
+      use.classList.remove("hidden");
+      setCameraStatus(`Captured JPEG (${Math.ceil(file.size / 1024)} KB). Review it before use.`);
+      use.focus();
+    } catch (err) {
+      if (isCurrentCameraOperation(operation)) setCameraStatus(err instanceof Error ? err.message : "Unable to capture an image.");
+    }
+  }
+
+  function retakeCameraFrame() { void startCameraStream(); }
+
+  async function useCameraFrame() {
+    const operation = { requestId: cameraState.requestId, target: cameraState.target };
+    const file = cameraState.pendingFile;
+    const use = cameraEl(".camera-use-btn");
+    if (!isCurrentCameraOperation(operation) || !use || !file) return;
+    use.disabled = true;
+    const accepted = await addImageFile(operation.target.questionId, file, operation.target.manager, () => isCurrentCameraOperation(operation));
+    if (!isCurrentCameraOperation(operation)) return;
+    if (!accepted) { use.disabled = false; setCameraStatus("Captured image could not be used."); return; }
+    operation.target.onAccept?.();
+    closeCameraCapture();
+  }
+
+  function openCameraCapture(questionId, manager, opener, onAccept) {
+    if (!cameraDialog || typeof cameraDialog.showModal !== "function" || !window.isSecureContext || typeof navigator.mediaDevices?.getUserMedia !== "function") {
+      setFieldError(questionId, "Camera capture requires a secure localhost or HTTPS page with camera support.");
+      return;
+    }
+    closeCameraCapture({ restoreFocus: false });
+    cameraState.target = { questionId, manager, onAccept };
+    cameraState.opener = opener;
+    resetCameraDialog();
+    cameraDialog.showModal();
+    cameraEl(".camera-start-btn")?.focus();
+    void updateCameraDevices(cameraState.requestId);
+  }
+
+  function createCameraButton(questionId, manager, onAccept) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn-secondary camera-open-btn";
+    button.textContent = "Use camera";
+    button.addEventListener("click", () => openCameraCapture(questionId, manager, button, onAccept));
+    return button;
+  }
+
+  function initCameraDialog() {
+    if (!cameraDialog) return;
+    [[".camera-close-btn", closeCameraCapture], [".camera-cancel-btn", closeCameraCapture], [".camera-start-btn", () => void startCameraStream()], [".camera-take-btn", () => void captureCameraFrame()], [".camera-retake-btn", retakeCameraFrame], [".camera-use-btn", () => void useCameraFrame()]].forEach(([selector, handler]) => cameraDialog.querySelector(selector)?.addEventListener("click", handler));
+    cameraDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeCameraCapture(); });
+    cameraDialog.addEventListener("close", () => { if (cameraState.target) closeCameraCapture({ restoreFocus: false }); });
+    navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+      if (cameraDialog.open) void updateCameraDevices(cameraState.requestId);
+    });
+  }
   function isOptionInput(el) {
     return el && (el.type === 'radio' || el.type === 'checkbox');
   }
@@ -2420,6 +2643,7 @@
   }
 
   function handleQuestionKeydown(event) {
+    if (cameraDialog?.open) return;
     if (event.key === 'Escape') {
       if (!expiredOverlay.classList.contains('hidden')) {
         if (timers.countdown) clearInterval(timers.countdown);
@@ -2529,6 +2753,8 @@
               const fileInput = card.querySelector('input[type="file"]');
               if (fileInput) fileInput.click();
             }
+          } else if (option?.classList.contains("camera-open-btn")) {
+            option.click();
           } else if (option.type === 'radio') {
             option.checked = true;
             debounceSave();
@@ -2959,9 +3185,11 @@
       });
       
       setupDropzone(dropzone, input);
+      const cameraButton = createCameraButton(question.id, questionImages);
 
       wrapper.appendChild(input);
       wrapper.appendChild(dropzone);
+      wrapper.appendChild(cameraButton);
       wrapper.appendChild(pathInput);
       wrapper.appendChild(selectedItems);
       card.appendChild(wrapper);
@@ -2992,6 +3220,12 @@
       attachDrop.className = "attach-inline-drop";
       attachDrop.setAttribute("tabindex", "0");
       attachDrop.textContent = "Drop image or click";
+
+      const attachCameraButton = createCameraButton(
+        question.id,
+        attachments,
+        () => revealAttachmentArea(question.id),
+      );
       
       const attachPath = document.createElement("input");
       attachPath.type = "text";
@@ -3032,7 +3266,7 @@
           if (e.shiftKey) {
             attachBtn.focus();
           } else {
-            attachPath.focus();
+            attachCameraButton.focus();
           }
         }
         if (e.key === "Escape") {
@@ -3065,6 +3299,7 @@
       
       attachInline.appendChild(attachFileInput);
       attachInline.appendChild(attachDrop);
+      attachInline.appendChild(attachCameraButton);
       attachInline.appendChild(attachPath);
       attachInline.appendChild(attachItems);
       
@@ -3171,6 +3406,31 @@
     setFieldError(id, "");
   }
 
+  async function addImageFile(questionId, file, manager, isCurrent = () => true) {
+    if (!isCurrent()) return false;
+    if (countUploadedFiles(questionId) + 1 > MAX_IMAGES) {
+      setFieldError(questionId, `Only ${MAX_IMAGES} images allowed.`);
+      return false;
+    }
+    try {
+      const validation = await validateImage(file);
+      if (!isCurrent()) return false;
+      if (!validation.valid) {
+        setFieldError(questionId, validation.error);
+        return false;
+      }
+    } catch (err) {
+      if (!isCurrent()) return false;
+      const message = err instanceof Error ? err.message : "Failed to validate image.";
+      setFieldError(questionId, message);
+      return false;
+    }
+    if (!isCurrent()) return false;
+    setFieldError(questionId, "");
+    manager.addFile(questionId, file);
+    return true;
+  }
+
   async function handleFileChange(questionId, input, manager, options = {}) {
     const { onEmpty } = options;
     setFieldError(questionId, "");
@@ -3182,27 +3442,7 @@
       return;
     }
 
-    if (countUploadedFiles(questionId) + 1 > MAX_IMAGES) {
-      setFieldError(questionId, `Only ${MAX_IMAGES} images allowed.`);
-      input.value = "";
-      return;
-    }
-
-    try {
-      const validation = await validateImage(file);
-      if (!validation.valid) {
-        setFieldError(questionId, validation.error);
-        input.value = "";
-        return;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to validate image.";
-      setFieldError(questionId, message);
-      input.value = "";
-      return;
-    }
-
-    manager.addFile(questionId, file);
+    if (!await addImageFile(questionId, file, manager)) input.value = "";
   }
 
   function revealAttachmentArea(questionId) {
@@ -3214,31 +3454,10 @@
   }
 
   async function addDroppedImage(question, file) {
-    if (countUploadedFiles(question.id) + 1 > MAX_IMAGES) {
-      setFieldError(question.id, `Only ${MAX_IMAGES} images allowed.`);
-      return;
+    const manager = question.type === "image" ? questionImages : attachments;
+    if (await addImageFile(question.id, file, manager) && question.type !== "image") {
+      revealAttachmentArea(question.id);
     }
-
-    try {
-      const validation = await validateImage(file);
-      if (!validation.valid) {
-        setFieldError(question.id, validation.error);
-        return;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to validate image.";
-      setFieldError(question.id, message);
-      return;
-    }
-
-    setFieldError(question.id, "");
-    if (question.type === "image") {
-      questionImages.addFile(question.id, file);
-      return;
-    }
-
-    revealAttachmentArea(question.id);
-    attachments.addFile(question.id, file);
   }
 
   function countUploadedFiles(excludingId) {
@@ -3667,6 +3886,7 @@
 
   async function submitForm(event) {
     event.preventDefault();
+    closeCameraCapture({ restoreFocus: false });
     clearGlobalError();
     clearFieldErrors();
 
@@ -3738,6 +3958,7 @@
   }
 
   function init() {
+    initCameraDialog();
     initTheme();
     clearReloadIntent();
     normalizeOptionKeysFromData();
@@ -3809,6 +4030,7 @@
         queueOpenBtn.disabled = !queueSessionSelect.value || selectedOption?.disabled;
       });
       queueOpenBtn.addEventListener("click", () => {
+        closeCameraCapture({ restoreFocus: false });
         const url = queueSessionSelect.value;
         if (!url) return;
         const selectedOption = queueSessionSelect.options[queueSessionSelect.selectedIndex];
@@ -3820,6 +4042,7 @@
       });
     }
     window.addEventListener("pagehide", (event) => {
+      closeCameraCapture({ restoreFocus: false });
       if (session.ended) return;
       if (event.persisted) return;
       if (hasReloadIntent()) return;
