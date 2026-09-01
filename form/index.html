@@ -117,6 +117,35 @@
     <div id="save-toast" class="save-toast hidden" aria-live="polite"></div>
   </main>
 
+  <dialog id="camera-dialog" class="camera-dialog" aria-labelledby="camera-dialog-title" aria-describedby="camera-dialog-help">
+      <header class="camera-dialog-header">
+        <div>
+          <h2 id="camera-dialog-title">Capture an image</h2>
+          <p id="camera-dialog-help">Camera access starts only when you choose Start camera; no audio is requested.</p>
+        </div>
+        <button type="button" class="camera-close-btn" aria-label="Close camera">×</button>
+      </header>
+      <div class="camera-device-row">
+        <label for="camera-device-select">Video input</label>
+        <select id="camera-device-select" disabled>
+          <option value="">Default camera</option>
+        </select>
+        <button type="button" class="btn-primary camera-start-btn">Start camera</button>
+      </div>
+      <div class="camera-preview">
+        <video class="camera-preview-video hidden" autoplay muted playsinline></video>
+        <img class="camera-captured-image hidden" alt="Captured camera still preview">
+        <span class="camera-preview-placeholder">Camera is off</span>
+      </div>
+      <p class="camera-dialog-status" role="status" aria-live="polite">Camera access has not started.</p>
+      <footer class="camera-dialog-actions">
+        <button type="button" class="btn-secondary camera-cancel-btn">Cancel</button>
+        <button type="button" class="btn-secondary camera-retake-btn hidden">Retake</button>
+        <button type="button" class="btn-primary camera-take-btn" disabled>Capture</button>
+        <button type="button" class="btn-primary camera-use-btn hidden">Use photo</button>
+      </footer>
+  </dialog>
+
   <!-- __CDN_SCRIPTS__ -->
   <script>
     window.__INTERVIEW_DATA__ = /* __INTERVIEW_DATA_PLACEHOLDER__ */;

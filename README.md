@@ -22,7 +22,7 @@ Restart pi to load the extension.
 
 ## Features
 
-- **Question Types**: Single-select, multi-select, text input, image upload, and info panels
+- **Question Types**: Single-select, multi-select, text input, image upload/camera capture, and info panels
 - **Rich Media**: Embed images, Chart.js charts, Mermaid diagrams, tables, and HTML in questions
 - **Pre-selection**: Recommended options show a "Recommended" badge and are pre-checked on load
 - **Conviction & Weight**: Control recommendation strength (`conviction`) and visual prominence (`weight`)
@@ -37,7 +37,7 @@ Restart pi to load the extension.
 - **Save Snapshots**: Save interview state to HTML for later review or revival
 - **Session Status Bar**: Shows project path, git branch, and session ID for identification
 - **Launcher Selection**: Open forms in Glimpse, an Orca tab, or a browser
-- **Image Support**: Drag & drop anywhere on question, file picker, or paste a path into the dedicated path field
+- **Image Support**: Drag & drop anywhere on a question, file picker, browser camera capture, or paste a path into the dedicated path field
 - **Path Normalization**: Handles shell-escaped paths (`\ `) and macOS screenshot filenames (narrow no-break space before AM/PM)
 - **Generate & Review Options**: Single/multi-select questions, including rich-option questions with inline content blocks, show "✦ Generate more" (appends new choices) and "↻ Review options" (reviews options and rewrites the question for clarity) buttons powered by an LLM
 - **Ask About an Option**: Single/multi options, including rich options with inline content blocks, can open an inline assistant panel with prompt chips, freeform follow-up questions, provider/model overrides under Advanced, and auto-saved option analysis
