@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-04
+
+### Highlights
+- Take photos directly in image questions and attachments.
+- Choose a physical or virtual camera, then preview and retake photos before using them.
+- Stay in control: the camera starts only when you ask, and no audio is recorded.
+
 ### Added
-- Added browser camera capture for image questions and per-question attachments. Camera access starts only after an explicit action.
-- Thanks to [@tryingET](https://github.com/tryingET) for #21.
+- Added browser camera capture for image questions and per-question attachments, with camera selection, a live preview, and photo confirmation. Existing uploads, drag-and-drop, and image paths still work as before. Thanks to [@tryingET](https://github.com/tryingET) for #21.
 
 ## [0.11.0] - 2026-08-11
 
