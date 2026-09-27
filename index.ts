@@ -321,7 +321,7 @@ function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; out
 }
 
 interface InterviewDetails {
-	status: "completed" | "cancelled" | "timeout" | "aborted" | "queued";
+	status: "completed" | "cancelled" | "timeout" | "aborted" | "queued" | "started";
 	responses: ResponseItem[];
 	url: string;
 	queuedMessage?: string;
@@ -349,6 +349,13 @@ const InterviewParams = Type.Object({
 		Type.Number({ description: "Seconds before auto-timeout", default: 600 })
 	),
 	verbose: Type.Optional(Type.Boolean({ description: "Enable debug logging", default: false })),
+	async: Type.Optional(
+		Type.Boolean({
+			description:
+				"Return immediately instead of waiting for the user. The answer arrives later as a message tagged with the returned interview ID; keep working and do not poll.",
+			default: false,
+		})
+	),
 	theme: Type.Optional(
 		Type.Object(
 			{
@@ -1014,6 +1021,13 @@ function filterAnsweredResponses(responses: ResponseItem[]): ResponseItem[] {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Closers for async interviews whose tool call already returned; they must not outlive the session.
+	const detachedInterviews = new Set<() => void>();
+	pi.on("session_shutdown", () => {
+		for (const close of detachedInterviews) close();
+		detachedInterviews.clear();
+	});
+
 	pi.registerTool({
 		name: "interview",
 		label: "Interview",
@@ -1040,11 +1054,12 @@ export default function (pi: ExtensionAPI) {
 		parameters: InterviewParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const { questions, timeout, verbose, theme } = params as {
+			const { questions, timeout, verbose, theme, async: runAsync } = params as {
 				questions: string;
 				timeout?: number;
 				verbose?: boolean;
 				theme?: InterviewThemeSettings;
+				async?: boolean;
 			};
 
 			if (!ctx.hasUI) {
@@ -1110,6 +1125,8 @@ export default function (pi: ExtensionAPI) {
 			let glimpseWin: GlimpseWindow | null = null;
 			let resolved = false;
 			let url = "";
+			let detached = false;
+			let launchMessage: string | undefined;
 			const cleanup = () => {
 				// Close the native window on every finish path, not just abort: the form can
 				// complete from another client (e.g. Moshi's browser) while Glimpse is open.
@@ -1157,6 +1174,19 @@ export default function (pi: ExtensionAPI) {
 						text = "Interview was aborted.";
 					}
 
+					if (detached) {
+						detachedInterviews.delete(closeDetached);
+						pi.sendMessage(
+							{
+								customType: "interview_result",
+								content: `Interview ${sessionId} finished.\n\n${text}`,
+								display: true,
+								details: { interviewId: sessionId, status, url, responses },
+							},
+							{ triggerTurn: true, deliverAs: "steer" },
+						);
+						return;
+					}
 					resolve({
 						content: [{ type: "text", text }],
 						details: { status, url, responses },
@@ -1167,6 +1197,24 @@ export default function (pi: ExtensionAPI) {
 					finish("aborted");
 				};
 				signal?.addEventListener("abort", handleAbort, { once: true });
+				const closeDetached = () => {
+					resolved = true;
+					cleanup();
+				};
+				// Called once the form is launched. A form finished before this point already resolved inline.
+				const detach = () => {
+					if (resolved) return;
+					detached = true;
+					signal?.removeEventListener("abort", handleAbort);
+					detachedInterviews.add(closeDetached);
+					resolve({
+						content: [{
+							type: "text",
+							text: `Interview ${sessionId} started: ${url}\n\nThe user's answer will arrive later as a message starting with "Interview ${sessionId} finished." Continue other work; do not wait or poll for it.`,
+						}],
+						details: { status: "started", url, responses: [], ...(launchMessage !== undefined ? { queuedMessage: launchMessage } : {}) },
+					});
+				};
 
 				let onGenerate: InterviewServerCallbacks["onGenerate"];
 				let onOptionInsight: InterviewServerCallbacks["onOptionInsight"];
@@ -1514,6 +1562,7 @@ export default function (pi: ExtensionAPI) {
 							queuedLines.push("");
 							queuedLines.push("Server waiting until you open the link.");
 							const queuedMessage = queuedLines.join("\n");
+							launchMessage = queuedMessage;
 							const queuedSummary = "Interview queued; see tool panel for link.";
 							if (onUpdate) {
 								onUpdate({
@@ -1535,6 +1584,7 @@ export default function (pi: ExtensionAPI) {
 									moshi: await probeMoshiGateway(),
 									outcome,
 								});
+								launchMessage = hint;
 								if (onUpdate) {
 									onUpdate({
 										content: [{ type: "text", text: hint }],
@@ -1602,6 +1652,9 @@ export default function (pi: ExtensionAPI) {
 							}
 						}
 					})
+					.then(() => {
+						if (runAsync) detach();
+					})
 					.catch((err) => {
 						cleanup();
 						reject(err);
@@ -1623,6 +1676,11 @@ export default function (pi: ExtensionAPI) {
 				const header = theme.fg("warning", "QUEUED");
 				const body = theme.fg("dim", details.queuedMessage);
 				return new Text(`${header}\n${body}`, 0, 0);
+			}
+
+			if (details.status === "started") {
+				const header = theme.fg("accent", "STARTED (answer arrives later)");
+				return new Text(details.queuedMessage ? `${header}\n${theme.fg("dim", details.queuedMessage)}` : header, 0, 0);
 			}
 
 			const statusColor =

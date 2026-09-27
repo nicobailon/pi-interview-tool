@@ -81,9 +81,12 @@ The interview tool is invoked by pi-agent, not imported directly:
 await interview({
   questions: '/path/to/questions.json',
   timeout: 600,  // optional, seconds (default: 600)
-  verbose: false // optional, debug logging
+  verbose: false, // optional, debug logging
+  async: false   // optional, return immediately and deliver the answer later
 });
 ```
+
+With `async: true` the tool opens the form and returns right away with an interview ID, so the agent keeps working and background results keep flowing. When the user submits, cancels, or the form times out, the same answer text arrives as a message starting with `Interview <id> finished.` and starts a new turn if the agent is idle. Outstanding async interviews close when the session ends.
 
 ## Question Schema
 
