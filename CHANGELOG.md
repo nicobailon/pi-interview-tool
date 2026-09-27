@@ -2,8 +2,15 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-26
+
+### Highlights
+- Ask a question without freezing the agent: with `async: true` the form opens and the agent keeps working.
+- Background work keeps flowing while you think, so finished subagents and other updates aren't stuck waiting on your answer.
+- Your answer comes back on its own when you submit, cancel, or the form times out, and wakes the agent if it's idle.
+
 ### Added
-- Added `async: true` to the interview tool. The form opens and the tool returns immediately, so the agent keeps working; the answer arrives later as a message tagged with the interview ID. Thanks to [@peedrr](https://github.com/peedrr) for #23.
+- Added an `async: true` option to the interview tool. The form opens as usual, but the tool returns right away so the agent can keep working. When you're done, your answers arrive as a message tagged with the interview ID. Any interviews still open close when the session ends. Thanks to [@peedrr](https://github.com/peedrr) for #23.
 
 ## [0.12.0] - 2026-09-04
 
