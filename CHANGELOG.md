@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added `async: true` to the interview tool. The form opens and the tool returns immediately, so the agent keeps working; the answer arrives later as a message tagged with the interview ID. Thanks to [@peedrr](https://github.com/peedrr) for #23.
+
 ## [0.12.0] - 2026-09-04
 
 ### Highlights

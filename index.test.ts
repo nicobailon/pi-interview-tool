@@ -748,7 +748,7 @@ describe("content rendering styles", () => {
 describe("tool registration", () => {
 	it("registers a promptSnippet so the tool appears in default tool prompts", () => {
 		let registeredTool: Record<string, unknown> | undefined;
-		interviewExtension({ registerTool: (tool: Record<string, unknown>) => { registeredTool = tool; } } as unknown as Parameters<typeof interviewExtension>[0]);
+		interviewExtension({ registerTool: (tool: Record<string, unknown>) => { registeredTool = tool; }, on: () => {} } as unknown as Parameters<typeof interviewExtension>[0]);
 
 		expect(registeredTool).toBeDefined();
 		expect(typeof registeredTool?.promptSnippet).toBe("string");
