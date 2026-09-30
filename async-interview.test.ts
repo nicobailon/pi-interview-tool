@@ -38,8 +38,9 @@ function startAsyncInterview() {
 	return { result, messages, nextMessage, shutdown: () => shutdown!() };
 }
 
-it("returns before the user answers and delivers the answer as one turn-triggering message", async () => {
-	const { result, messages, nextMessage } = startAsyncInterview();
+it("returns before the user answers and delivers the answer as one turn-triggering message", async ({ onTestFinished }) => {
+	const { result, messages, nextMessage, shutdown } = startAsyncInterview();
+	onTestFinished(shutdown);
 	const started = await result;
 	expect(started.details.status).toBe("started");
 	expect(messages).toHaveLength(0);

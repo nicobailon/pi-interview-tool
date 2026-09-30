@@ -240,6 +240,9 @@ export interface InterviewServerOptions {
 
 export interface InterviewServerCallbacks {
 	onSubmit: (responses: ResponseItem[]) => void;
+	/** Finalize the UI after saving; nextUrl keeps its tab open. Rejection leaves the server available for retry. */
+	onFinish?: (nextUrl: string | null) => Promise<void>;
+	onDismiss?: () => void;
 	onCancel: (reason?: "timeout" | "user" | "stale", partialResponses?: ResponseItem[]) => void;
 	onGenerate?: (
 		questionId: string,
@@ -1409,6 +1412,8 @@ export async function startInterviewServer(
 	let watchdog: NodeJS.Timeout | null = null;
 	let sessionKeepAlive: NodeJS.Timeout | null = null;
 	let completed = false;
+	let submission: "pending" | "unsaved" | "saved" = "pending";
+	let continuationSessionIds = new Set<string>();
 
 	const stopWatchdog = () => {
 		if (watchdog) {
@@ -1437,7 +1442,7 @@ export async function startInterviewServer(
 		if (!browserConnected) {
 			browserConnected = true;
 		}
-		if (sessionEntry) {
+		if (sessionEntry && !completed) {
 			touchSession(sessionEntry);
 		}
 	};
@@ -1656,7 +1661,9 @@ export async function startInterviewServer(
 				if (!body) return;
 				if (!validateTokenBody(body, sessionToken, res)) return;
 				if (completed) {
+					res.setHeader("Connection", "close");
 					sendJson(res, 200, { ok: true });
+					callbacks.onDismiss?.();
 					return;
 				}
 				const payload = body as { reason?: string; responses?: ResponseItem[] };
@@ -1754,9 +1761,27 @@ export async function startInterviewServer(
 				}
 
 				markCompleted();
+				submission = options.autoSaveOnSubmit === false ? "saved" : "unsaved";
+				// Interviews started after submission can open their own tabs.
+				continuationSessionIds = new Set(getActiveSessions()
+					.filter((session) => session.id !== sessionId)
+					.map((session) => session.id));
 				unregisterSession(sessionId);
+				sendJson(res, 200, { ok: true });
+				setImmediate(() => callbacks.onSubmit(responses));
+				return;
+			}
+
+			if (method === "POST" && url.pathname === "/finish") {
+				const body = await parseBodyOrRespond();
+				if (!body) return;
+				if (!validateTokenBody(body, sessionToken, res)) return;
+				if (submission !== "saved") {
+					sendJson(res, 409, { ok: false, error: "Submit and save the interview before closing" });
+					return;
+				}
 				const nextSession = getActiveSessions()
-					.filter((s) => s.id !== sessionId)
+					.filter((s) => continuationSessionIds.has(s.id))
 					.sort((a, b) => {
 						if (a.startedAt !== b.startedAt) {
 							return a.startedAt - b.startedAt;
@@ -1764,8 +1789,10 @@ export async function startInterviewServer(
 						return a.id.localeCompare(b.id);
 					})[0];
 				const nextUrl = nextSession ? nextSession.url : null;
+				// The next interview can reuse this port; do not reuse this server connection.
+				res.setHeader("Connection", "close");
+				await callbacks.onFinish?.(nextUrl);
 				sendJson(res, 200, { ok: true, nextUrl });
-				setImmediate(() => callbacks.onSubmit(responses));
 				return;
 			}
 
@@ -1897,6 +1924,7 @@ export async function startInterviewServer(
 				});
 
 				await writeFile(join(snapshotPath, "index.html"), html);
+				if (submitted && submission === "unsaved") submission = "saved";
 
 				sendJson(res, 200, {
 					ok: true,

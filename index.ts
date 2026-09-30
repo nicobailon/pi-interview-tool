@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { closeOrcaInterview } from "./orca-close.ts";
 import { StringEnum, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -166,9 +167,10 @@ export async function openOrcaUrl(
 	url: string,
 	cwd: string,
 ): Promise<void> {
+	// Orca may reload a tab's initial URL during creation, which cancels an interview.
 	const createResult = await pi.exec(
 		"orca",
-		["tab", "create", "--url", url, "--json"],
+		["tab", "create", "--url", "about:blank", "--json"],
 		{ timeout: 60_000, cwd },
 	);
 	assertExecSucceeded("orca tab create", createResult);
@@ -196,6 +198,13 @@ export async function openOrcaUrl(
 		{ cwd },
 	);
 	assertExecSucceeded("orca tab switch", switchResult);
+
+	const navigateResult = await pi.exec(
+		"orca",
+		["goto", "--page", browserPageId, "--url", url],
+		{ cwd },
+	);
+	assertExecSucceeded("orca goto", navigateResult);
 }
 
 export async function openLinuxUrl(
@@ -1021,7 +1030,7 @@ function filterAnsweredResponses(responses: ResponseItem[]): ResponseItem[] {
 }
 
 export default function (pi: ExtensionAPI) {
-	// Closers for async interviews whose tool call already returned; they must not outlive the session.
+	// Closers for interviews whose tool call already returned; session shutdown closes them.
 	const detachedInterviews = new Set<() => void>();
 	pi.on("session_shutdown", () => {
 		for (const close of detachedInterviews) close();
@@ -1128,8 +1137,7 @@ export default function (pi: ExtensionAPI) {
 			let detached = false;
 			let launchMessage: string | undefined;
 			const cleanup = () => {
-				// Close the native window on every finish path, not just abort: the form can
-				// complete from another client (e.g. Moshi's browser) while Glimpse is open.
+				detachedInterviews.delete(closeDetached);
 				if (glimpseWin) {
 					try { glimpseWin.close(); } catch {}
 					glimpseWin = null;
@@ -1140,6 +1148,11 @@ export default function (pi: ExtensionAPI) {
 				}
 			};
 
+			const closeDetached = () => {
+				resolved = true;
+				cleanup();
+			};
+
 			return new Promise((resolve, reject) => {
 				const finish = (
 					status: InterviewDetails["status"],
@@ -1148,7 +1161,9 @@ export default function (pi: ExtensionAPI) {
 				) => {
 					if (resolved) return;
 					resolved = true;
-					cleanup();
+					signal?.removeEventListener("abort", handleAbort);
+					if (status === "completed") detachedInterviews.add(closeDetached);
+					else cleanup();
 
 					let text = "";
 					if (status === "completed") {
@@ -1175,7 +1190,6 @@ export default function (pi: ExtensionAPI) {
 					}
 
 					if (detached) {
-						detachedInterviews.delete(closeDetached);
 						pi.sendMessage(
 							{
 								customType: "interview_result",
@@ -1197,10 +1211,6 @@ export default function (pi: ExtensionAPI) {
 					finish("aborted");
 				};
 				signal?.addEventListener("abort", handleAbort, { once: true });
-				const closeDetached = () => {
-					resolved = true;
-					cleanup();
-				};
 				// Called once the form is launched. A form finished before this point already resolved inline.
 				const detach = () => {
 					if (resolved) return;
@@ -1509,6 +1519,13 @@ export default function (pi: ExtensionAPI) {
 					},
 					{
 						onSubmit: (responses) => finish("completed", responses),
+						onFinish: async (nextUrl) => {
+							if (!nextUrl && settings.launcher === "orca") {
+								await closeOrcaInterview(pi, url, ctx.cwd);
+							}
+							cleanup();
+						},
+						onDismiss: cleanup,
 						onCancel: (reason, partialResponses) =>
 							reason === "timeout"
 								? finish("timeout", partialResponses ?? [])

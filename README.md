@@ -333,7 +333,7 @@ Settings in `~/.pi/agent/settings.json`:
 - `snapshotDir`: Directory for saved interview snapshots (default: `~/.pi/interview-snapshots/`)
 - `autoSaveOnSubmit`: Automatically save snapshot on successful submit (default: `true`)
 
-**Port setting**: Set a fixed `port` (e.g., `19847`) to use a consistent port across sessions.
+**Port setting**: Set a fixed `port` (e.g., `19847`) to use a consistent port across sessions. That port remains occupied until the form finishes or is dismissed, including while saving or closing is awaiting a retry. Finish or dismiss the previous form before starting another interview on the same fixed port, even if the agent has already received its answers.
 
 **Generate model**: `generateModel` sets the model for the generate/review option actions (e.g., `"anthropic/claude-haiku-4-5"`). Defaults to the agent's current model, then falls back to a cheap available model. If an explicitly configured generate model fails at request time and the current session is using a different model, interview retries once with the current session model.
 
@@ -477,6 +477,8 @@ Save a snapshot of your interview at any time for later review or to resume.
 **Auto-save on Submit:**
 - Enabled by default (`autoSaveOnSubmit: true` in settings)
 - Automatically saves after successful submission
+- Orca closes the interview tab after saving, or continues to the next queued interview in the same tab
+- If saving fails, your answers still reach the agent. The form stays open with the error and a **Retry save** button. Retrying saves the submitted answers without sending them again.
 - Folder name includes `-submitted` suffix
 
 **Reviving a Saved Interview:**
@@ -503,6 +505,16 @@ The form opens with answers pre-populated. Edit and submit as normal.
     images/
       mockup.png        # Uploaded images (relative paths in HTML)
 ```
+
+## Testing
+
+Run `npm test` and `npm run typecheck` for the automated checks. The real-browser test requires Orca running, the `orca` CLI on `PATH`, and this checkout inside an Orca worktree. It opens and closes test tabs; leave those forms untouched while it runs.
+
+```bash
+PI_INTERVIEW_ORCA_E2E=1 npm test -- orca.e2e.test.ts --disableConsoleIntercept
+```
+
+The test checks submission, save-error recovery, queued interviews, and tab closure. It prints a JSON result after checking the saved snapshots and confirming an unrelated tab remains open, then removes its test tabs and temporary files.
 
 ## Limits
 
