@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Orca interview tabs close after submission and autosave, or continue to the next queued interview. Failed saves keep the form open with an error and a retry button while the agent receives the answers.
 - Fixed Orca interviews cancelling during tab creation and reporting preselected recommendations as partial user responses.
 
 ## [0.13.0] - 2026-09-26

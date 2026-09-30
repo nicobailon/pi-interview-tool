@@ -384,7 +384,7 @@
   }
 
   function sendCancelBeacon(reason) {
-    if (session.cancelSent || session.ended) return;
+    if (session.cancelSent) return;
     session.cancelSent = true;
     const responses = collectResponses();
     const payload = JSON.stringify({ token: sessionToken, reason, responses });
@@ -3832,14 +3832,14 @@
       }
     }
 
-    return { responses, images };
+    return { responses, images, savedOptionInsights: serializeSavedOptionInsights() };
   }
 
   async function saveInterview(options = {}) {
     const { submitted = false } = options;
 
     try {
-      const payload = await buildPayload();
+      const payload = options.payload ?? await buildPayload();
       const response = await fetch("/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3847,7 +3847,7 @@
           token: sessionToken,
           responses: payload.responses,
           images: payload.images,
-          savedOptionInsights: serializeSavedOptionInsights(),
+          savedOptionInsights: payload.savedOptionInsights,
           submitted,
         }),
       });
@@ -3855,15 +3855,12 @@
       if (result.ok) {
         showSaveSuccess(result.relativePath);
         return true;
-      } else {
-        if (!submitted) showSaveError(result.error);
-        return false;
       }
+      throw new Error(result.error || "Save failed");
     } catch (err) {
-      if (!submitted) {
-        const message = err instanceof Error ? err.message : String(err);
-        showSaveError(`Failed to save interview: ${message}`);
-      }
+      if (submitted) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      showSaveError(`Failed to save interview: ${message}`);
       return false;
     }
   }
@@ -3884,20 +3881,62 @@
     setTimeout(() => toast.classList.add("hidden"), 3000);
   }
 
+  let submittedPayload = null;
+  let submittedSnapshotSaved = data.autoSaveOnSubmit === false;
+
+  async function finishSubmission() {
+    try {
+      if (!submittedSnapshotSaved) {
+        await saveInterview({ submitted: true, payload: submittedPayload });
+        submittedSnapshotSaved = true;
+      }
+      // Orca can close this document before /finish responds.
+      clearProgress();
+      const response = await fetch("/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: sessionToken }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error || "Could not close interview");
+      if (result.nextUrl) {
+        window.location.href = result.nextUrl;
+        return;
+      }
+      successOverlay.classList.remove("hidden");
+      completionPending = true;
+      setTimeout(() => closeWindow(), 800);
+      setTimeout(() => {
+        if (!document.hidden) showCloseFallback();
+      }, 1200);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      showGlobalError(`Your answers were sent to the agent. ${submittedSnapshotSaved ? "Could not close the interview" : "Could not save the snapshot"}: ${message}`);
+      submitBtn.textContent = submittedSnapshotSaved ? "Retry closing" : "Retry save";
+      submitBtn.disabled = false;
+      submitBtn.focus();
+    }
+  }
+
   async function submitForm(event) {
     event.preventDefault();
+    if (submitBtn.disabled) return;
     closeCameraCapture({ restoreFocus: false });
     clearGlobalError();
     clearFieldErrors();
 
     submitBtn.disabled = true;
+    if (submittedPayload) {
+      await finishSubmission();
+      return;
+    }
 
     try {
       const payload = await buildPayload();
       const response = await fetch("/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: sessionToken, ...payload }),
+        body: JSON.stringify({ token: sessionToken, responses: payload.responses, images: payload.images }),
       });
 
       let submitResult;
@@ -3920,32 +3959,17 @@
         return;
       }
 
-      if (data.autoSaveOnSubmit !== false) {
-        saveInterview({ submitted: true });
-      }
-
-      clearProgress();
+      submittedPayload = payload;
+      session.ended = true;
       stopHeartbeat();
       stopQueuePolling();
-      session.ended = true;
-
-      if (submitResult.nextUrl) {
-        window.location.href = submitResult.nextUrl;
-        return;
-      }
-
-      successOverlay.classList.remove("hidden");
-      completionPending = true;
-      setTimeout(() => closeWindow(), 800);
-      // In-app browsers (Moshi) and tabs we didn't open ignore window.close().
-      // If we're still here after the close attempt, tell the user the ball is
-      // back in the terminal. The visibility listener handles pages that were
-      // backgrounded when this timer fired.
-      setTimeout(() => {
-        if (!document.hidden) {
-          showCloseFallback();
-        }
-      }, 1200);
+      clearTimeout(timers.save);
+      clearTimeout(timers.expiration);
+      clearTimeout(timers.countdownDisplay);
+      countdownBadge?.classList.add("hidden");
+      formEl.querySelectorAll("input, textarea, select, button").forEach(el => { el.disabled = true; });
+      document.getElementById("save-btn-header").disabled = true;
+      await finishSubmission();
     } catch (err) {
       if (isNetworkError(err)) {
         showSessionExpired();
@@ -4043,7 +4067,6 @@
     }
     window.addEventListener("pagehide", (event) => {
       closeCameraCapture({ restoreFocus: false });
-      if (session.ended) return;
       if (event.persisted) return;
       if (hasReloadIntent()) return;
       sendCancelBeacon("user");
