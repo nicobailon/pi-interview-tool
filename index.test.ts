@@ -132,7 +132,7 @@ describe("openOrcaUrl", () => {
 	const url = "http://127.0.0.1:1234/interview";
 	const cwd = "/Users/example/project";
 
-	it("creates and focuses an Orca browser tab in the current worktree", async () => {
+	it("creates a blank Orca tab before navigating to the interview", async () => {
 		const calls: { command: string; args: string[]; cwd: string | undefined; timeout: number | undefined }[] = [];
 
 		await openOrcaUrl(
@@ -157,13 +157,19 @@ describe("openOrcaUrl", () => {
 		expect(calls).toEqual([
 			{
 				command: "orca",
-				args: ["tab", "create", "--url", url, "--json"],
+				args: ["tab", "create", "--url", "about:blank", "--json"],
 				cwd,
 				timeout: 60_000,
 			},
 			{
 				command: "orca",
 				args: ["tab", "switch", "--page", "page-123", "--focus"],
+				cwd,
+				timeout: undefined,
+			},
+			{
+				command: "orca",
+				args: ["goto", "--page", "page-123", "--url", url],
 				cwd,
 				timeout: undefined,
 			},
@@ -204,6 +210,23 @@ describe("openOrcaUrl", () => {
 			url,
 			cwd,
 		)).rejects.toThrow("orca tab switch: exit code 1: worktree unavailable");
+	});
+
+	it("rejects when interview navigation fails", async () => {
+		await expect(openOrcaUrl(
+			{
+				exec: async (_command, args) => args[0] === "goto"
+					? { stdout: "", stderr: "navigation failed", code: 1, killed: false }
+					: {
+						stdout: JSON.stringify({ result: { browserPageId: "page-123" } }),
+						stderr: "",
+						code: 0,
+						killed: false,
+					},
+			},
+			url,
+			cwd,
+		)).rejects.toThrow("orca goto: exit code 1: navigation failed");
 	});
 });
 

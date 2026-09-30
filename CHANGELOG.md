@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fixed Orca interviews cancelling during tab creation and reporting preselected recommendations as partial user responses.
+
 ## [0.13.0] - 2026-09-26
 
 ### Highlights
