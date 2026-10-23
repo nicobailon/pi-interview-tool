@@ -1254,6 +1254,7 @@ export default function (pi: ExtensionAPI) {
 								...(requestAuth.apiKey !== undefined ? { apiKey: requestAuth.apiKey } : {}),
 								...(requestAuth.headers !== undefined ? { headers: requestAuth.headers } : {}),
 								...(resolution.env !== undefined ? { env: resolution.env } : {}),
+								sessionId: ctx.sessionManager.getSessionId(),
 								signal: generateSignal,
 							},
 						).result();
