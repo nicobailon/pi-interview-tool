@@ -5,6 +5,11 @@
 ### Added
 - Paste a screenshot straight into a question: click **+ attach** (or focus an image upload area) and press ⌘/Ctrl+V. Plain text on the clipboard still pastes as text, and screenshots pasted into different questions stay separate. Thanks to [@tryingET](https://github.com/tryingET) for #30.
 
+### Fixed
+- Fixed generating options, rewriting a question, and asking about an option failing on OpenCode Go models with `400 MissingSessionID`. These requests now send the current session ID, which OpenCode requires. Needs Pi 0.86 or later. Fixes #29.
+- Fixed Orca interviews cancelling during tab creation and reporting preselected recommendations as partial user responses. Thanks to [@w-winter](https://github.com/w-winter) for #26.
+- Pressing Enter in a clarification field, or ⌘/Ctrl+Enter while asking about an option, no longer submits the whole interview. Enter in a clarification moves to the next question, the Ask box shows its ⌘/Ctrl+Enter shortcut, and the shortcuts bar lists `A` for Ask when asking is available. Thanks to [@wackywendell](https://github.com/wackywendell) for #28.
+
 ## [0.13.0] - 2026-09-26
 
 ### Highlights
