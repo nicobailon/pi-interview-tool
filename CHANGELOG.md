@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fixed generating options, rewriting a question, and asking about an option failing on OpenCode Go models with `400 MissingSessionID`. These requests now send the current session ID, which OpenCode requires. Needs Pi 0.86 or later. Fixes #29.
+
 ## [0.13.0] - 2026-09-26
 
 ### Highlights
