@@ -703,18 +703,8 @@ describe("content rendering styles", () => {
 		expect(clientSource).not.toContain("function setupEdgeNavigation");
 	});
 
-	it("lets text clipboard data win inside focused editable controls", () => {
-		const clientSource = readFileSync("form/script.js", "utf-8");
-		expect(clientSource).toContain("function handlePaste(event)");
-		expect(clientSource).toContain("if (!isEditableTextControl(active)) return;");
-		expect(clientSource).toContain('const text = event.clipboardData?.getData("text/plain");');
-		expect(clientSource).toContain('if (typeof text !== "string" || text.length === 0) return;');
-		expect(clientSource).toContain("event.preventDefault();\n    event.stopPropagation();");
-		expect(clientSource).toContain('active.setRangeText(text, start, end, "end");');
-		expect(clientSource).toContain('active.dispatchEvent(new Event("input", { bubbles: true }));');
-		expect(clientSource).not.toContain("function insertTextAtSelection");
-		expect(clientSource).toContain('document.addEventListener("paste", handlePaste, true);');
-	});
+	// Clipboard behavior (including text precedence/selection) is covered by
+	// real browser ClipboardEvent tests: npm run test:browser.
 
 	it("keeps Ask results saved by default without extra mutation actions", () => {
 		const clientSource = readFileSync("form/script.js", "utf-8");
