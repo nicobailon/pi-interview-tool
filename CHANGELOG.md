@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Paste a screenshot straight into a question: click **+ attach** (or focus an image upload area) and press ⌘/Ctrl+V. Plain text on the clipboard still pastes as text, and screenshots pasted into different questions stay separate. Thanks to [@tryingET](https://github.com/tryingET) for #30.
+
 ## [0.13.0] - 2026-09-26
 
 ### Highlights

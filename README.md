@@ -301,13 +301,7 @@ All media types support `position`: `"above"` (default), `"below"`, or `"side"` 
 | `Esc` | Show exit overlay (press twice to quit) |
 | `⌘+Shift+L` | Toggle theme (if enabled; appears in shortcuts bar) |
 
-To paste a screenshot, click **+ attach**, then paste while its drop area is focused.
-The **+ attach** button itself and image-question upload area also accept image paste.
-Nonempty plain text takes precedence on mixed text/image clipboards; ordinary text
-and path fields keep their text-paste behavior. Images use the existing upload limits
-and replace the question's previous uploaded file. Pasted files retain their visible
-names but receive unique upload filenames to keep same-name screenshots distinct.
-Clipboard access happens only through the explicit paste event, never in the background.
+To paste a screenshot, click **+ attach** (or focus an image upload area) and press `⌘+V`. Plain text on the clipboard still pastes as text.
 
 ## Configuration
 
@@ -518,28 +512,3 @@ The form opens with answers pre-populated. Edit and submit as normal.
 - Max 5MB per image
 - Max 4096x4096 pixels per image
 - Allowed types: PNG, JPG, GIF, WebP
-
-## Development checks
-
-```bash
-npm test
-npm run typecheck
-npm run test:browser
-```
-
-The separate browser check uses synthetic `ClipboardEvent`/`DataTransfer` objects
-in headless Chromium, checks attachment state and the submitted upload payload,
-and never accesses the system clipboard or desktop. It replaces the source-string
-paste assertion with behavioral coverage; it does not prove native clipboard delivery.
-
-Playwright and Chromium are optional and are not downloaded by the test. With
-Playwright already available as a local module and its browser present, no options
-are needed. To reuse other installations:
-
-```bash
-INTERVIEW_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs \
-INTERVIEW_CHROMIUM=/path/to/chromium npm run test:browser
-```
-
-Missing Playwright/browser prerequisites are reported as skipped tests with a reason,
-not as exercised browser coverage. Unit tests and CI remain independent of this check.

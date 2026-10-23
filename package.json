@@ -31,7 +31,6 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "test:browser": "node --test tests/paste.browser.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "peerDependencies": {

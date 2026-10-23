@@ -42,7 +42,6 @@
   const imagePathState = new Map();
   const attachState = new Map();
   const attachPathState = new Map();
-  const pastedUploadNames = new WeakMap();
   const cameraState = {
     requestId: 0,
     stream: null,
@@ -1899,12 +1898,10 @@
     event.preventDefault();
     event.stopPropagation();
     refreshCountdown();
-    // Clipboard screenshots commonly share a name such as image.png. Keep that
-    // visible name, but give each paste its own upload name so questions cannot
-    // overwrite each other in the server's shared session directory.
-    const pastedFile = new File([file], file.name, { type: file.type, lastModified: file.lastModified });
-    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[file.type] || "bin";
-    pastedUploadNames.set(pastedFile, `pasted-${crypto.randomUUID()}.${extension}`);
+    // Clipboard screenshots commonly share a name such as image.png, and the server
+    // stores uploads by filename, so give each paste a unique name.
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[file.type];
+    const pastedFile = new File([file], `${makeClientId("pasted")}.${extension}`, { type: file.type });
     // Share validation, per-question replacement, count limits and upload state.
     void addDroppedImage(question, pastedFile);
   }
@@ -2858,7 +2855,7 @@
         card.classList.remove('keyboard-nav');
         if (nav.questionIndex !== index) {
           // Attachment controls deliberately focus their own paste/path/camera target.
-          if (e.target.closest('.option-item, .attach-hint, .attach-inline')) {
+          if (e.target.closest('.option-item, .attach-btn, .attach-inline')) {
             deactivateSubmitArea();
             nav.questionIndex = index;
             const prevCard = nav.cards.find(c => c.classList.contains('active'));
@@ -3845,7 +3842,7 @@
         const data = await readFileBase64(file);
         images.push({
           id: question.id,
-          filename: pastedUploadNames.get(file) || file.name,
+          filename: file.name,
           mimeType: file.type,
           data,
         });
@@ -3858,7 +3855,7 @@
           const data = await readFileBase64(file);
           images.push({
             id: question.id,
-            filename: pastedUploadNames.get(file) || file.name,
+            filename: file.name,
             mimeType: file.type,
             data,
             isAttachment: true,
