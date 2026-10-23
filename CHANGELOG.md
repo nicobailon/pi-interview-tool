@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Paste a screenshot straight into a question: click **+ attach** (or focus an image upload area) and press ⌘/Ctrl+V. Plain text on the clipboard still pastes as text, and screenshots pasted into different questions stay separate. Thanks to [@tryingET](https://github.com/tryingET) for #30.
+
 ### Fixed
 - Fixed generating options, rewriting a question, and asking about an option failing on OpenCode Go models with `400 MissingSessionID`. These requests now send the current session ID, which OpenCode requires. Needs Pi 0.86 or later. Fixes #29.
 - Fixed Orca interviews cancelling during tab creation and reporting preselected recommendations as partial user responses. Thanks to [@w-winter](https://github.com/w-winter) for #26.
