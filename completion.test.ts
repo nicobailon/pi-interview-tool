@@ -2,10 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import { interviewTestContext } from "./test-context.ts";
 
 const home = mkdtempSync(join(tmpdir(), "pi-interview-completion-"));
 const snapshotDir = join(home, "snapshots");
@@ -20,6 +19,19 @@ const ResultSchema = Type.Object({ details: Type.Object({ status: Type.String(),
 type Result = Static<typeof ResultSchema>;
 type RequestBody = Partial<{ token: string; responses: { id: string; value: string }[]; submitted: boolean; reason: string }>;
 const shutdowns: (() => void)[] = [];
+const registry: Pick<ExtensionContext["modelRegistry"], "getAvailable"> = { getAvailable: () => [] };
+const ui: Pick<ExtensionContext["ui"], "notify"> = { notify: () => {} };
+// SAFETY: The interview reads only these context fields in this test.
+const context = {
+	cwd: home,
+	hasUI: true,
+	hasPendingMessages: () => false,
+	model: undefined,
+	// SAFETY: With no models configured, the interview only calls getAvailable on the registry.
+	modelRegistry: registry as ExtensionContext["modelRegistry"],
+	// SAFETY: Browser-based interviews only use notify from the Pi UI.
+	ui: ui as ExtensionContext["ui"],
+} as ExtensionContext;
 afterEach(() => { for (const shutdown of shutdowns.splice(0)) shutdown(); });
 afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
@@ -63,7 +75,7 @@ async function startInterview() {
 	const started = await execute!("test", {
 		questions: JSON.stringify({ questions: [{ id: "name", type: "text", question: "Name?" }] }),
 		async: true,
-	}, undefined, undefined, interviewTestContext(home));
+	}, undefined, undefined, context);
 	Value.Assert(ResultSchema, started);
 	url = started.details.url;
 	return {

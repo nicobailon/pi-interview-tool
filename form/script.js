@@ -3890,8 +3890,6 @@
         await saveInterview({ submitted: true, payload: submittedPayload });
         submittedSnapshotSaved = true;
       }
-      // Orca can close this document before /finish responds.
-      clearProgress();
       const response = await fetch("/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3964,6 +3962,8 @@
       stopHeartbeat();
       stopQueuePolling();
       clearTimeout(timers.save);
+      // The answers are delivered; a draft left behind by a failed save would prefill a later interview.
+      clearProgress();
       clearTimeout(timers.expiration);
       clearTimeout(timers.countdownDisplay);
       countdownBadge?.classList.add("hidden");

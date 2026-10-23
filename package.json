@@ -24,7 +24,6 @@
     "bin/",
     "form/",
     "index.ts",
-    "orca-close.ts",
     "schema.ts",
     "server.ts",
     "settings.ts",

@@ -506,16 +506,6 @@ The form opens with answers pre-populated. Edit and submit as normal.
       mockup.png        # Uploaded images (relative paths in HTML)
 ```
 
-## Testing
-
-Run `npm test` and `npm run typecheck` for the automated checks. The real-browser test requires Orca running, the `orca` CLI on `PATH`, and this checkout inside an Orca worktree. It opens and closes test tabs; leave those forms untouched while it runs.
-
-```bash
-PI_INTERVIEW_ORCA_E2E=1 npm test -- orca.e2e.test.ts --disableConsoleIntercept
-```
-
-The test checks submission, save-error recovery, queued interviews, and tab closure. It prints a JSON result after checking the saved snapshots and confirming an unrelated tab remains open, then removes its test tabs and temporary files.
-
 ## Limits
 
 - Max 12 images total per submission

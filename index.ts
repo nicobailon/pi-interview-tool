@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { closeOrcaInterview } from "./orca-close.ts";
+import { Value } from "typebox/value";
 import { StringEnum, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -205,6 +205,38 @@ export async function openOrcaUrl(
 		{ cwd },
 	);
 	assertExecSucceeded("orca goto", navigateResult);
+}
+
+const OrcaTabs = Type.Object({
+	result: Type.Object({
+		tabs: Type.Array(Type.Object({
+			url: Type.String(),
+			browserPageId: Type.String(),
+			worktreeId: Type.String(),
+		})),
+	}),
+});
+
+export async function closeOrcaInterview(
+	pi: Pick<ExtensionAPI, "exec">,
+	url: string,
+	cwd: string,
+): Promise<void> {
+	// A queued interview can finish in a tab opened from another worktree.
+	const listResult = await pi.exec("orca", ["tab", "list", "--worktree", "all", "--json"], { timeout: 60_000, cwd });
+	assertExecSucceeded("orca tab list", listResult);
+	const output: unknown = JSON.parse(listResult.stdout);
+	Value.Assert(OrcaTabs, output);
+	for (const tab of output.result.tabs) {
+		if (tab.url === url) {
+			const closeResult = await pi.exec(
+				"orca",
+				["tab", "close", "--page", tab.browserPageId, "--worktree", `id:${tab.worktreeId}`],
+				{ timeout: 60_000, cwd },
+			);
+			assertExecSucceeded("orca tab close", closeResult);
+		}
+	}
 }
 
 export async function openLinuxUrl(
@@ -1629,6 +1661,9 @@ export default function (pi: ExtensionAPI) {
 										glimpseWin = null;
 										if (!resolved) {
 											finish("cancelled", [], "user");
+										} else {
+											// After submit, the server waits for save and /finish; closing the window ends that wait.
+											cleanup();
 										}
 									});
 									if (remoteLikely) {
