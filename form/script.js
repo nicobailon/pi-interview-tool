@@ -1864,19 +1864,49 @@
 
   function handlePaste(event) {
     const active = document.activeElement;
-    if (!isEditableTextControl(active)) return;
+    const clipboard = event.clipboardData;
+    const text = clipboard?.getData("text/plain");
 
-    const text = event.clipboardData?.getData("text/plain");
-    if (typeof text !== "string" || text.length === 0) return;
+    // Text wins, including mixed text/image clipboards and whitespace-only text.
+    if (typeof text === "string" && text.length > 0) {
+      if (!isEditableTextControl(active)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const start = active.selectionStart ?? active.value.length;
+      const end = active.selectionEnd ?? start;
+      active.setRangeText(text, start, end, "end");
+      active.dispatchEvent(new Event("input", { bubbles: true }));
+      refreshCountdown();
+      debounceSave();
+      return;
+    }
+
+    // Only explicit paste onto a focused upload affordance can attach an image.
+    // Never infer a destination from the current question or read the clipboard API.
+    if (!(active instanceof HTMLElement) ||
+        !active.matches(".attach-btn, .attach-inline-drop, .file-dropzone") ||
+        !active.contains(event.target) || active.closest(".hidden, [hidden]")) return;
+    const card = active.closest(".question-card");
+    const question = questions.find((q) => q.id === card?.dataset.questionId);
+    if (!question || question.type === "info") return;
+
+    const item = Array.from(clipboard?.items || []).find(
+      (entry) => entry.kind === "file" && entry.type.startsWith("image/")
+    );
+    const file = item?.getAsFile() || Array.from(clipboard?.files || []).find(
+      (entry) => entry.type.startsWith("image/")
+    );
+    if (!file) return;
 
     event.preventDefault();
     event.stopPropagation();
-    const start = active.selectionStart ?? active.value.length;
-    const end = active.selectionEnd ?? start;
-    active.setRangeText(text, start, end, "end");
-    active.dispatchEvent(new Event("input", { bubbles: true }));
     refreshCountdown();
-    debounceSave();
+    // Clipboard screenshots commonly share a name such as image.png, and the server
+    // stores uploads by filename, so give each paste a unique name.
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[file.type];
+    const pastedFile = new File([file], `${makeClientId("pasted")}.${extension}`, { type: file.type });
+    // Share validation, per-question replacement, count limits and upload state.
+    void addDroppedImage(question, pastedFile);
   }
 
   function maybeStartOtherInput(event) {
@@ -2833,7 +2863,9 @@
       card.addEventListener('click', (e) => {
         card.classList.remove('keyboard-nav');
         if (nav.questionIndex !== index) {
-          if (e.target.closest('.option-item')) {
+          // Attachment controls deliberately focus their own paste/path/camera target.
+          if (e.target.closest('.option-item, .attach-btn, .attach-inline')) {
+            deactivateSubmitArea();
             nav.questionIndex = index;
             const prevCard = nav.cards.find(c => c.classList.contains('active'));
             if (prevCard && prevCard !== card) {
@@ -3228,7 +3260,7 @@
       const attachDrop = document.createElement("div");
       attachDrop.className = "attach-inline-drop";
       attachDrop.setAttribute("tabindex", "0");
-      attachDrop.textContent = "Drop image or click";
+      attachDrop.textContent = "Drop image, paste screenshot (Ctrl/⌘+V), or click";
 
       const attachCameraButton = createCameraButton(
         question.id,

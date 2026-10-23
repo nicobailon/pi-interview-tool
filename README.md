@@ -27,7 +27,7 @@ Restart pi to load the extension.
 - **Pre-selection**: Recommended options show a "Recommended" badge and are pre-checked on load
 - **Conviction & Weight**: Control recommendation strength (`conviction`) and visual prominence (`weight`)
 - **"Other" Option**: Single/multi select questions support custom text input
-- **Per-Question Attachments**: Attach images to any question via button or drag & drop
+- **Per-Question Attachments**: Attach images via button, drag & drop, or screenshot paste on a focused upload control
 - **Keyboard Navigation**: Full keyboard support with `⌘+←`/`⌘+→` (`Ctrl` off macOS), arrow keys, Tab, Enter
 - **Auto-save**: Responses saved to localStorage, restored on reload
 - **Session Timeout**: Configurable timeout with countdown badge, refreshes on activity
@@ -296,10 +296,12 @@ All media types support `position`: `"above"` (default), `"below"`, or `"side"` 
 | `⌘+←` `⌘+→` | Navigate between questions (`Ctrl` off macOS) |
 | `Tab` | Cycle through options |
 | `Enter` / `Space` | Select option |
-| `⌘+V` | Paste text in the focused input |
+| `⌘+V` (`Ctrl+V` off macOS) | Paste text in the focused input, or a screenshot on a focused upload control |
 | `⌘+Enter` | Submit form |
 | `Esc` | Show exit overlay (press twice to quit) |
 | `⌘+Shift+L` | Toggle theme (if enabled; appears in shortcuts bar) |
+
+To paste a screenshot, click **+ attach** (or focus an image upload area) and press `⌘+V`. Plain text on the clipboard still pastes as text.
 
 ## Configuration
 
