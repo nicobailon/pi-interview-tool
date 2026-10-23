@@ -166,9 +166,10 @@ export async function openOrcaUrl(
 	url: string,
 	cwd: string,
 ): Promise<void> {
+	// Orca may reload a tab's initial URL during creation, which cancels an interview.
 	const createResult = await pi.exec(
 		"orca",
-		["tab", "create", "--url", url, "--json"],
+		["tab", "create", "--url", "about:blank", "--json"],
 		{ timeout: 60_000, cwd },
 	);
 	assertExecSucceeded("orca tab create", createResult);
@@ -196,6 +197,13 @@ export async function openOrcaUrl(
 		{ cwd },
 	);
 	assertExecSucceeded("orca tab switch", switchResult);
+
+	const navigateResult = await pi.exec(
+		"orca",
+		["goto", "--page", browserPageId, "--url", url],
+		{ cwd },
+	);
+	assertExecSucceeded("orca goto", navigateResult);
 }
 
 export async function openLinuxUrl(
