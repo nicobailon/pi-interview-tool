@@ -6,6 +6,7 @@
 - Fixed generating options, rewriting a question, and asking about an option failing on OpenCode Go models with `400 MissingSessionID`. These requests now send the current session ID, which OpenCode requires. Needs Pi 0.86 or later. Fixes #29.
 - Fixed Orca interviews cancelling during tab creation and reporting preselected recommendations as partial user responses. Thanks to [@w-winter](https://github.com/w-winter) for #26.
 - Orca interview tabs close after submission and autosave, or continue to the next queued interview. Failed saves keep the form open with an error and a retry button while the agent receives the answers. Thanks to [@w-winter](https://github.com/w-winter) for #27.
+- Pressing Enter in a clarification field, or ⌘/Ctrl+Enter while asking about an option, no longer submits the whole interview. Enter in a clarification moves to the next question, the Ask box shows its ⌘/Ctrl+Enter shortcut, and the shortcuts bar lists `A` for Ask when asking is available. Thanks to [@wackywendell](https://github.com/wackywendell) for #28.
 
 ## [0.13.0] - 2026-09-26
 
