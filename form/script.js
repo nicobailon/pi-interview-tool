@@ -1155,7 +1155,8 @@
     const input = document.createElement("textarea");
     input.className = "option-insight-input";
     input.rows = 2;
-    input.placeholder = "Ask why it works, where it fails, or how to rewrite it...";
+    const askModLabel = navigator.platform.toUpperCase().indexOf("MAC") >= 0 ? "⌘" : "Ctrl";
+    input.placeholder = `Ask why it works, where it fails, or how to rewrite it... (${askModLabel}+Enter to ask)`;
     input.dataset.questionId = question.id;
     input.dataset.optionKey = optionKey;
     input.value = active.prompt;
@@ -1167,6 +1168,8 @@
     input.addEventListener("keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
+        // Keep the document-level Cmd/Ctrl+Enter handler from also submitting the interview.
+        event.stopPropagation();
         submitOptionInsight(question, optionKey);
       }
     });
@@ -2696,6 +2699,12 @@
       return;
     }
 
+    if (inOptionNote && event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      nextQuestion();
+      return;
+    }
+
     if (inAskArea || inOptionNote) return;
 
     if (isQuestionNavShortcut(event, "prev")) {
@@ -3967,6 +3976,9 @@
     document.querySelectorAll(".mod-key").forEach((modKey) => {
       modKey.textContent = isMac ? "⌘" : "Ctrl";
     });
+    if (questions.some(questionCanAskAboutOption)) {
+      document.querySelector("[data-ask-shortcut]")?.classList.remove("hidden");
+    }
     
     setText(titleEl, data.title || "Interview");
     setText(descriptionEl, data.description || "");
@@ -4007,6 +4019,13 @@
     startQueuePolling();
 
     formEl.addEventListener("submit", submitForm);
+    // Enter in a single-line text input would implicitly submit the whole interview.
+    // Cmd/Ctrl+Enter still submits through handleQuestionKeydown.
+    formEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && event.target instanceof HTMLInputElement && isEditableTextControl(event.target)) {
+        event.preventDefault();
+      }
+    });
 
     // Wire up save buttons
     const saveBtnHeader = document.getElementById("save-btn-header");
