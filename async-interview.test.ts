@@ -5,9 +5,10 @@ import { expect, it } from "vitest";
 
 // Settings load from $HOME when index.ts is imported. The Orca launcher routes every
 // launch through pi.exec, so the stub below keeps tests from opening real windows.
+// Port 0 keeps other test files' servers from reusing this one's port after shutdown.
 const home = mkdtempSync(join(tmpdir(), "pi-interview-async-"));
 mkdirSync(join(home, ".pi", "agent"), { recursive: true });
-writeFileSync(join(home, ".pi", "agent", "settings.json"), JSON.stringify({ interview: { launcher: "orca" } }));
+writeFileSync(join(home, ".pi", "agent", "settings.json"), JSON.stringify({ interview: { launcher: "orca", port: 0 } }));
 process.env.HOME = home;
 const { default: interviewExtension } = await import("./index.ts");
 
