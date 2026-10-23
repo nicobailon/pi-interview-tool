@@ -2,14 +2,25 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-23
+
+### Highlights
+- Paste a screenshot into any question with ⌘/Ctrl+V, with no need to save it as a file first.
+- Pressing Enter or ⌘/Ctrl+Enter in the wrong field no longer sends the interview before you're done.
+- Orca interviews open reliably and the tab closes on its own once your answers are saved.
+- Option suggestions and Ask work on OpenCode Go models.
+
 ### Added
 - Paste a screenshot straight into a question: click **+ attach** (or focus an image upload area) and press ⌘/Ctrl+V. Plain text on the clipboard still pastes as text, and screenshots pasted into different questions stay separate. Thanks to [@tryingET](https://github.com/tryingET) for #30.
 
+### Changed
+- Orca interview tabs now close after you submit and your answers are saved. If another interview is waiting, it opens in the same tab instead. Thanks to [@w-winter](https://github.com/w-winter) for #27.
+- If saving your answers fails, the form stays open with an error and a Retry button instead of failing silently. The agent still receives your answers. When you set a fixed `port`, it stays in use until that form finishes or you close it.
+
 ### Fixed
-- Fixed generating options, rewriting a question, and asking about an option failing on OpenCode Go models with `400 MissingSessionID`. These requests now send the current session ID, which OpenCode requires. Needs Pi 0.86 or later. Fixes #29.
-- Fixed Orca interviews cancelling during tab creation and reporting preselected recommendations as partial user responses. Thanks to [@w-winter](https://github.com/w-winter) for #26.
-- Orca interview tabs close after submission and autosave, or continue to the next queued interview. Failed saves keep the form open with an error and a retry button while the agent receives the answers. Thanks to [@w-winter](https://github.com/w-winter) for #27.
-- Pressing Enter in a clarification field, or ⌘/Ctrl+Enter while asking about an option, no longer submits the whole interview. Enter in a clarification moves to the next question, the Ask box shows its ⌘/Ctrl+Enter shortcut, and the shortcuts bar lists `A` for Ask when asking is available. Thanks to [@wackywendell](https://github.com/wackywendell) for #28.
+- Pressing Enter in a clarification field, or ⌘/Ctrl+Enter while asking about an option, no longer submits the whole interview. Enter in a clarification now moves to the next question. The Ask box shows its ⌘/Ctrl+Enter shortcut, and the shortcuts bar lists `A` for Ask when asking is available. Thanks to [@wackywendell](https://github.com/wackywendell) for #28.
+- Orca interviews no longer cancel themselves while the tab is opening. Before, this could send the agent the preselected recommendations as if you had answered. Thanks to [@w-winter](https://github.com/w-winter) for #26.
+- Generating options, rewriting a question, and asking about an option now work on OpenCode Go models instead of failing with `400 MissingSessionID`. Requires Pi 0.86 or later. Fixes #29.
 
 ## [0.13.0] - 2026-09-26
 
