@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { StringEnum, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -204,6 +205,38 @@ export async function openOrcaUrl(
 		{ cwd },
 	);
 	assertExecSucceeded("orca goto", navigateResult);
+}
+
+const OrcaTabs = Type.Object({
+	result: Type.Object({
+		tabs: Type.Array(Type.Object({
+			url: Type.String(),
+			browserPageId: Type.String(),
+			worktreeId: Type.String(),
+		})),
+	}),
+});
+
+export async function closeOrcaInterview(
+	pi: Pick<ExtensionAPI, "exec">,
+	url: string,
+	cwd: string,
+): Promise<void> {
+	// A queued interview can finish in a tab opened from another worktree.
+	const listResult = await pi.exec("orca", ["tab", "list", "--worktree", "all", "--json"], { timeout: 60_000, cwd });
+	assertExecSucceeded("orca tab list", listResult);
+	const output: unknown = JSON.parse(listResult.stdout);
+	Value.Assert(OrcaTabs, output);
+	for (const tab of output.result.tabs) {
+		if (tab.url === url) {
+			const closeResult = await pi.exec(
+				"orca",
+				["tab", "close", "--page", tab.browserPageId, "--worktree", `id:${tab.worktreeId}`],
+				{ timeout: 60_000, cwd },
+			);
+			assertExecSucceeded("orca tab close", closeResult);
+		}
+	}
 }
 
 export async function openLinuxUrl(
@@ -1029,7 +1062,7 @@ function filterAnsweredResponses(responses: ResponseItem[]): ResponseItem[] {
 }
 
 export default function (pi: ExtensionAPI) {
-	// Closers for async interviews whose tool call already returned; they must not outlive the session.
+	// Closers for interviews whose tool call already returned; session shutdown closes them.
 	const detachedInterviews = new Set<() => void>();
 	pi.on("session_shutdown", () => {
 		for (const close of detachedInterviews) close();
@@ -1136,8 +1169,7 @@ export default function (pi: ExtensionAPI) {
 			let detached = false;
 			let launchMessage: string | undefined;
 			const cleanup = () => {
-				// Close the native window on every finish path, not just abort: the form can
-				// complete from another client (e.g. Moshi's browser) while Glimpse is open.
+				detachedInterviews.delete(closeDetached);
 				if (glimpseWin) {
 					try { glimpseWin.close(); } catch {}
 					glimpseWin = null;
@@ -1148,6 +1180,11 @@ export default function (pi: ExtensionAPI) {
 				}
 			};
 
+			const closeDetached = () => {
+				resolved = true;
+				cleanup();
+			};
+
 			return new Promise((resolve, reject) => {
 				const finish = (
 					status: InterviewDetails["status"],
@@ -1156,7 +1193,9 @@ export default function (pi: ExtensionAPI) {
 				) => {
 					if (resolved) return;
 					resolved = true;
-					cleanup();
+					signal?.removeEventListener("abort", handleAbort);
+					if (status === "completed") detachedInterviews.add(closeDetached);
+					else cleanup();
 
 					let text = "";
 					if (status === "completed") {
@@ -1183,7 +1222,6 @@ export default function (pi: ExtensionAPI) {
 					}
 
 					if (detached) {
-						detachedInterviews.delete(closeDetached);
 						pi.sendMessage(
 							{
 								customType: "interview_result",
@@ -1205,10 +1243,6 @@ export default function (pi: ExtensionAPI) {
 					finish("aborted");
 				};
 				signal?.addEventListener("abort", handleAbort, { once: true });
-				const closeDetached = () => {
-					resolved = true;
-					cleanup();
-				};
 				// Called once the form is launched. A form finished before this point already resolved inline.
 				const detach = () => {
 					if (resolved) return;
@@ -1518,6 +1552,13 @@ export default function (pi: ExtensionAPI) {
 					},
 					{
 						onSubmit: (responses) => finish("completed", responses),
+						onFinish: async (nextUrl) => {
+							if (!nextUrl && settings.launcher === "orca") {
+								await closeOrcaInterview(pi, url, ctx.cwd);
+							}
+							cleanup();
+						},
+						onDismiss: cleanup,
 						onCancel: (reason, partialResponses) =>
 							reason === "timeout"
 								? finish("timeout", partialResponses ?? [])
@@ -1621,6 +1662,9 @@ export default function (pi: ExtensionAPI) {
 										glimpseWin = null;
 										if (!resolved) {
 											finish("cancelled", [], "user");
+										} else {
+											// After submit, the server waits for save and /finish; closing the window ends that wait.
+											cleanup();
 										}
 									});
 									if (remoteLikely) {
