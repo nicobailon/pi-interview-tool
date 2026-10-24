@@ -67,6 +67,11 @@ function escapeHtml(str: string): string {
 	return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function escapeTerminalControls(text: string): string {
+	return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g,
+		(char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 function openInGlimpse(
 	open: (html: string, opts: Record<string, unknown>) => GlimpseWindow,
 	url: string,
@@ -385,7 +390,7 @@ interface SavedQuestionsFile extends QuestionsFile {
 }
 
 const InterviewParams = Type.Object({
-	questions: Type.String({ description: "Inline JSON string with questions, or path to a questions JSON / saved interview HTML file" }),
+	questions: Type.String({ description: "Questions JSON object serialized as a string (not a direct object or bare array), or path to a questions JSON / saved interview HTML file. For single/multi choices, recommended contains exact option labels; context and conviction are sibling question fields." }),
 	timeout: Type.Optional(
 		Type.Number({ description: "Seconds before auto-timeout", default: 600 })
 	),
@@ -1080,9 +1085,12 @@ export default function (pi: ExtensionAPI) {
 			"Provides better UX than back-and-forth chat for structured input. " +
 			"Image responses and attachments are returned as file paths - use read tool directly to display them. " +
 			"Pass questions as inline JSON string directly (preferred) or as a path to a JSON file. " +
-			'Questions JSON format: { "title": "...", "description": "...", "questions": [{ "id": "q1", "type": "single|multi|text|image|info", "question": "...", "options": ["A", "B"], "content": { "source": "...", "lang": "ts" }, "media": { "type": "image|chart|mermaid|table|html", ... } }] }. ' +
+			'Questions JSON example: { "title": "Choices", "description": "Review my suggestions and adjust as needed.", "questions": [{ "id": "approach", "type": "single", "question": "Which approach?", "options": ["A", "B"], "recommended": "A", "context": "A fits the constraints.", "conviction": "slight" }, { "id": "features", "type": "multi", "question": "Which features?", "options": ["X", "Y"], "recommended": ["X"], "context": "X covers the stated need." }] }. ' +
 			"Options can be strings or objects: { label: string, content?: { source, lang?, file?, lines?, highlights?, title?, showSource? } }. " +
-			"Always set recommended with context explaining your reasoning. Recommended options show a 'Recommended' badge and are pre-selected for the user. " +
+			"For single/multi questions, recommend only when justified: single uses an exact option-label string, multi uses an array of exact option-label strings. " +
+			"context and conviction are question-level fields beside recommended, never nested inside it; recommended is not an object. " +
+			"Do not set recommended or conviction on text, image, or info questions; use context for explanation. " +
+			"Recommended options show a 'Recommended' badge and are pre-selected unless conviction is slight. " +
 			'Use conviction: "slight" when unsure (does NOT pre-select), conviction: "strong" when very confident (shows Recommended badge). ' +
 			"Omit conviction for normal recommendations (pre-selects). " +
 			'Use weight: "critical" for key decisions (visually prominent), weight: "minor" for low-stakes questions (compact card). ' +
@@ -1718,12 +1726,20 @@ export default function (pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const { questions } = args as { questions?: string };
 			const label = questions ? `Interview: ${questions}` : "Interview";
-			return new Text(theme.fg("toolTitle", theme.bold(label)), 0, 0);
+			return new Text(theme.fg("toolTitle", theme.bold(escapeTerminalControls(label))), 0, 0);
 		},
 
 		renderResult(result, _options, theme) {
 			const details = result.details as InterviewDetails | undefined;
-			if (!details) return new Text("Interview", 0, 0);
+			if (!details || !["completed", "cancelled", "timeout", "aborted", "queued", "started"].includes(details.status)
+				|| !Array.isArray(details.responses)
+				|| (details.queuedMessage !== undefined && typeof details.queuedMessage !== "string")) {
+				const text = result.content
+					.filter((item) => item.type === "text")
+					.map((item) => item.text)
+					.join("\n");
+				return new Text(escapeTerminalControls(text) || "Interview", 0, 0);
+			}
 
 			if (details.status === "queued" && details.queuedMessage) {
 				const header = theme.fg("warning", "QUEUED");
