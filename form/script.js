@@ -2591,7 +2591,7 @@
   }
 
   function clearOptionHighlight(card) {
-    card.querySelectorAll('.option-row, .option-item, .done-item, .file-dropzone, .image-path-input').forEach(item => {
+    card.querySelectorAll('.option-row, .option-item, .done-item, .file-dropzone, .image-path-input, .attach-btn').forEach(item => {
       item.classList.remove('focused');
     });
   }
