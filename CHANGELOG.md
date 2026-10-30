@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **+ attach** can now be reached with Tab on choice questions and opened with Enter or Space without selecting an option. Esc closes the attachment area and puts focus back on **+ attach**. Thanks to [@tryingET](https://github.com/tryingET) for #33.
+
 ## [0.14.0] - 2026-10-23
 
 ### Highlights
