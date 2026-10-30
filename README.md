@@ -148,7 +148,7 @@ With `async: true` the tool opens the form and returns right away with an interv
 | `type` | string | `single`, `multi`, `text`, `image`, or `info` |
 | `question` | string | Question text |
 | `options` | string[] or object[] | Choices (required for single/multi). Can be strings or `{ label, content? }` objects |
-| `recommended` | string or string[] | Shows "Recommended" badge and pre-selects option(s) |
+| `recommended` | string or string[] | Exact option label (single) or labels (multi). Shows "Recommended" badge and pre-selects option(s). Single/multi only; put `context` and `conviction` beside it, not inside |
 | `conviction` | string | `"strong"` or `"slight"`. Slight opts out of pre-selection. Requires `recommended` |
 | `weight` | string | `"critical"` (prominent card) or `"minor"` (compact card) |
 | `context` | string | Help text shown below question |
