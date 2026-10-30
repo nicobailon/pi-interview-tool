@@ -422,14 +422,14 @@ export function validateQuestions(data: unknown): QuestionsFile {
 
 		if (q.conviction !== undefined && q.recommended === undefined) {
 			if (q.type === "text" || q.type === "image" || q.type === "info") {
-				throw new Error(`Question "${q.id}": conviction not allowed for type "${q.type}"; use recommended and conviction only on single or multi questions, and context for explanation`);
+				throw new Error(`Question "${q.id}": conviction not allowed for type "${q.type}" (only single/multi questions take recommended and conviction)`);
 			}
 			throw new Error(`Question "${q.id}": conviction requires recommended`);
 		}
 
 		if (q.recommended !== undefined) {
 			if (q.type === "text" || q.type === "image" || q.type === "info") {
-				throw new Error(`Question "${q.id}": recommended not allowed for type "${q.type}"; use recommended and conviction only on single or multi questions, and context for explanation`);
+				throw new Error(`Question "${q.id}": recommended not allowed for type "${q.type}" (only single/multi questions take recommended and conviction)`);
 			}
 
 			const optionLabels = q.options?.map(getOptionLabel) ?? [];
@@ -439,7 +439,7 @@ export function validateQuestions(data: unknown): QuestionsFile {
 					q.recommended = q.recommended[0];
 				}
 				if (typeof q.recommended !== "string") {
-					throw new Error(`Question "${q.id}": recommended must be string for single-select; use an exact option label, with context and conviction beside recommended, not inside it (e.g. {"recommended":"A","context":"Reason","conviction":"slight"})`);
+					throw new Error(`Question "${q.id}": recommended must be string for single-select: an exact option label, with context and conviction as sibling fields, e.g. {"recommended":"A","context":"Reason"}`);
 				}
 				if (!optionLabels.includes(q.recommended)) {
 					throw new Error(
@@ -452,7 +452,7 @@ export function validateQuestions(data: unknown): QuestionsFile {
 				const recs = Array.isArray(q.recommended) ? q.recommended : [q.recommended];
 				for (const rec of recs) {
 					if (typeof rec !== "string") {
-						throw new Error(`Question "${q.id}": recommended must contain only strings for multi-select; use exact option labels, with context and conviction beside recommended, not inside it`);
+						throw new Error(`Question "${q.id}": recommended must be exact option labels for multi-select, with context and conviction as sibling fields`);
 					}
 					if (!optionLabels.includes(rec)) {
 						throw new Error(`Question "${q.id}": recommended "${rec}" not in options`);

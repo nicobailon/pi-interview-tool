@@ -774,6 +774,22 @@ describe("tool registration", () => {
 		expect(typeof registeredTool?.promptSnippet).toBe("string");
 		expect((registeredTool?.promptSnippet as string).length).toBeGreaterThan(0);
 	});
+
+	it("advertises a recommendation example that passes validation", () => {
+		let description = "";
+		interviewExtension({ registerTool: (tool: { description: string }) => { description = tool.description; }, on: () => {} } as unknown as Parameters<typeof interviewExtension>[0]);
+		const example = description.match(/Example: (\{.*?\] \})\./)?.[1];
+		expect(example).toBeDefined();
+		const { questions } = validateQuestions(JSON.parse(example!));
+		expect(questions.map((q) => q.recommended)).toEqual(["Postgres", ["Auth"]]);
+	});
+
+	it("shows Pi's tool error text when details are empty", () => {
+		let renderResult: ((result: unknown, options: unknown, theme: unknown) => { render(width: number): string[] }) | undefined;
+		interviewExtension({ registerTool: (tool: { renderResult: typeof renderResult }) => { renderResult = tool.renderResult; }, on: () => {} } as unknown as Parameters<typeof interviewExtension>[0]);
+		const error = { content: [{ type: "text", text: 'Question "q": recommended must be string' }], details: {} };
+		expect(renderResult!(error, {}, {}).render(120).join("\n")).toContain('Question "q": recommended must be string');
+	});
 });
 
 describe("server binding", () => {

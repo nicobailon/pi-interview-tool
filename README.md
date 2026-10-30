@@ -148,20 +148,12 @@ With `async: true` the tool opens the form and returns right away with an interv
 | `type` | string | `single`, `multi`, `text`, `image`, or `info` |
 | `question` | string | Question text |
 | `options` | string[] or object[] | Choices (required for single/multi). Can be strings or `{ label, content? }` objects |
-| `recommended` | string for single; string[] for multi | Exact option label(s), not an object or option index. Only for single/multi questions. Shows the badge; pre-selects unless conviction is slight |
+| `recommended` | string or string[] | Exact option label (single) or labels (multi). Shows "Recommended" badge and pre-selects option(s). Single/multi only; put `context` and `conviction` beside it, not inside |
 | `conviction` | string | `"strong"` or `"slight"`. Slight opts out of pre-selection. Requires `recommended` |
 | `weight` | string | `"critical"` (prominent card) or `"minor"` (compact card) |
 | `context` | string | Help text shown below question |
 | `content` | object | Content block displayed below question text (`lang: "md"|"markdown"` previews Markdown by default) |
 | `media` | object or object[] | Media content: image, chart, mermaid, table, or html |
-
-Keep recommendation rationale and strength at question level:
-`"recommended": "React", "context": "Fits the constraints.", "conviction": "slight"`.
-Do not nest `context` or `conviction` inside `recommended`. Text, image and info questions
-must omit `recommended` and `conviction`; use `context` or `content` for explanation.
-The tool parameter `questions` is the JSON object **serialized as a string**, or a file path;
-it is not a direct object or bare array. Existing compatibility remains: a single-element
-array for single-select is unwrapped, and a string for multi-select is wrapped in an array.
 
 ### Content Blocks
 
