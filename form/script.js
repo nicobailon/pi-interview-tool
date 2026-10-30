@@ -1856,33 +1856,6 @@
     return event.key === key && modPressed && !otherModPressed && !event.altKey && !event.shiftKey;
   }
 
-  function isAttachmentShortcut(event) {
-    return event.code === "Space" && event.ctrlKey && event.shiftKey &&
-      !event.altKey && !event.metaKey && !event.defaultPrevented &&
-      !event.isComposing && event.keyCode !== 229;
-  }
-
-  function handleAttachmentShortcut(event) {
-    if (!isAttachmentShortcut(event) || session.ended || session.expired) return;
-    // Reserve the chord inside the form even without a target: a focused Submit
-    // button must not interpret it as ordinary Space activation.
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.repeat) return;
-    const active = document.activeElement;
-    if (!(active instanceof HTMLElement) || !active.contains(event.target) ||
-        active.closest(".hidden, [hidden]")) return;
-    const card = active.closest(".question-card");
-    const index = nav.cards.indexOf(card);
-    const question = questions.find((q) => q.id === card?.dataset.questionId);
-    const target = card?.querySelector(question?.type === "image" ? ".file-dropzone" : ".attach-inline-drop");
-    if (index < 0 || !question || question.type === "info" || !target) return;
-    focusQuestion(index);
-    if (question.type !== "image") revealAttachmentArea(question.id);
-    target.focus();
-    refreshCountdown();
-  }
-
   function isEditableTextControl(element) {
     if (element instanceof HTMLTextAreaElement) return true;
     if (!(element instanceof HTMLInputElement)) return false;
@@ -2809,10 +2782,6 @@
       }
       
       if (event.key === 'Enter' || event.key === ' ') {
-      // A rejected shortcut/IME Space must not fall through to upload activation.
-      if (event.key === ' ' && isDropzone(document.activeElement) &&
-          (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented ||
-           event.isComposing || event.keyCode === 229)) return;
       if (isPathInput(document.activeElement)) {
         return;
       }
@@ -2931,7 +2900,6 @@
     });
     
     document.addEventListener("paste", handlePaste, true);
-    formEl.addEventListener("keydown", handleAttachmentShortcut, true);
     document.addEventListener('keydown', handleQuestionKeydown);
     
     if (nav.cards.length > 0) {
@@ -3222,7 +3190,6 @@
       const dropzone = document.createElement("div");
       dropzone.className = "file-dropzone";
       dropzone.setAttribute("tabindex", "0");
-      dropzone.setAttribute("aria-keyshortcuts", "Control+Shift+Space");
       dropzone.innerHTML = `
         <span class="file-dropzone-icon">+</span>
         <span class="file-dropzone-text">Click to upload</span>
@@ -3253,8 +3220,7 @@
         }
       });
       dropzone.addEventListener("keydown", (e) => {
-        if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey &&
-            !e.defaultPrevented && !e.isComposing && e.keyCode !== 229) {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           e.stopPropagation();
           if (!filePickerOpen) {
@@ -3296,8 +3262,6 @@
       attachBtn.className = "attach-btn";
       attachBtn.innerHTML = '<span>+</span> attach';
       attachBtn.dataset.questionId = question.id;
-      attachBtn.title = "Attach an image (Control+Shift+Space)";
-      attachBtn.setAttribute("aria-keyshortcuts", "Control+Shift+Space");
       
       const attachInline = document.createElement("div");
       attachInline.className = "attach-inline hidden";
@@ -3355,8 +3319,7 @@
         }
       });
       attachDrop.addEventListener("keydown", (e) => {
-        if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey &&
-            !e.defaultPrevented && !e.isComposing && e.keyCode !== 229) {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           if (!filePickerOpen) {
             filePickerOpen = true;

@@ -296,13 +296,12 @@ All media types support `position`: `"above"` (default), `"below"`, or `"side"` 
 | `⌘+←` `⌘+→` | Navigate between questions (`Ctrl` off macOS) |
 | `Tab` / `Shift+Tab` | Cycle through options and **+ attach**; text questions retain native Tab order |
 | `Enter` / `Space` | Select option |
-| `Ctrl+Shift+Space` | Focus the current question’s attachment drop area (Control, not Command, on Mac) |
 | `⌘+V` (`Ctrl+V` off macOS) | Paste text in the focused input, or a screenshot on a focused upload control |
 | `⌘+Enter` | Submit form |
 | `Esc` | Show exit overlay (press twice to quit) |
 | `⌘+Shift+L` | Toggle theme (if enabled; appears in shortcuts bar) |
 
-To paste a screenshot, click **+ attach**, reach it with `Tab` and open it with `Enter`/`Space`, or press `Ctrl+Shift+Space` while a question has focus. Then paste with `Ctrl+V` (`⌘+V` on Mac). The shortcut opens attachment controls without launching a file picker or reading the clipboard; `Esc` closes the attachment controls and returns to **+ attach**. Plain-text paste is unchanged. Custom browser/OS/input-method bindings may intercept the shortcut; Tab/button access remains available.
+To paste a screenshot, click **+ attach** (or reach it with `Tab` and press `Enter`), or focus an image upload area, then press `⌘+V`. `Esc` closes the attachment controls. Plain text on the clipboard still pastes as text.
 
 ## Configuration
 

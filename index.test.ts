@@ -726,30 +726,6 @@ describe("content rendering styles", () => {
 		expect(clientSource).not.toContain("function setupEdgeNavigation");
 	});
 
-	it.each([
-		{ name: "Control+Shift+Space", event: {}, matches: true },
-		{ name: "no Control", event: { ctrlKey: false }, matches: false },
-		{ name: "no Shift", event: { shiftKey: false }, matches: false },
-		{ name: "Command is not Control", event: { ctrlKey: false, metaKey: true }, matches: false },
-		{ name: "extra Command", event: { metaKey: true }, matches: false },
-		{ name: "Alt/AltGr", event: { altKey: true }, matches: false },
-		{ name: "other physical key", event: { code: "KeyA" }, matches: false },
-		{ name: "IME composition", event: { isComposing: true }, matches: false },
-		{ name: "legacy IME marker", event: { keyCode: 229 }, matches: false },
-		{ name: "already handled", event: { defaultPrevented: true }, matches: false },
-		{ name: "held key is recognized for consumption", event: { repeat: true }, matches: true },
-	])("attachment shortcut predicate: $name", ({ event, matches }) => {
-		// Execute the production predicate, not a duplicated key-matching rule.
-		// Focus, native Tab/button activation and paste are checked in a browser.
-		const source = readFileSync("form/script.js", "utf-8");
-		const body = source.match(/  function isAttachmentShortcut\(event\) \{([\s\S]*?)\n  \}/)?.[1];
-		expect(body, "production attachment shortcut predicate").toBeDefined();
-		const predicate = new Function("event", body!);
-		expect(predicate({ code: "Space", ctrlKey: true, shiftKey: true,
-			altKey: false, metaKey: false, isComposing: false, keyCode: 32,
-			defaultPrevented: false, repeat: false, ...event })).toBe(matches);
-	});
-
 	it("lets text clipboard data win inside focused editable controls", () => {
 		const clientSource = readFileSync("form/script.js", "utf-8");
 		expect(clientSource).toContain("function handlePaste(event)");
