@@ -312,6 +312,12 @@ describe("validateQuestions", () => {
 			);
 		});
 
+		it("explains sibling fields when recommended is a nested object", () => {
+			const nested = { option: "A", context: "Reason", conviction: "slight" };
+			expect(() => validateQuestions(valid({ recommended: nested }))).toThrow("context and conviction as sibling fields");
+			expect(() => validateQuestions(validMulti({ recommended: [nested] }))).toThrow("context and conviction as sibling fields");
+		});
+
 		it("rejects multiple option-level recommendations for single-select", () => {
 			expect(() => validateQuestions(valid({
 				options: [{ label: "A", recommended: true }, { label: "B", recommended: true }],

@@ -186,8 +186,8 @@ const SCHEMA_EXAMPLE = `Expected format:
 {
   "title": "Optional Title",
   "questions": [
-    { "id": "q1", "type": "single", "question": "Pick one?", "options": ["A", "B"] },
-    { "id": "q2", "type": "multi", "question": "Pick many?", "options": ["X", "Y", "Z"] },
+    { "id": "q1", "type": "single", "question": "Pick one?", "options": ["A", "B"], "recommended": "A", "context": "Reason for A", "conviction": "slight" },
+    { "id": "q2", "type": "multi", "question": "Pick many?", "options": ["X", "Y", "Z"], "recommended": ["X"], "context": "Reason for X" },
     { "id": "q3", "type": "text", "question": "Describe?" },
     { "id": "q4", "type": "image", "question": "Upload?" }
   ]
@@ -421,12 +421,15 @@ export function validateQuestions(data: unknown): QuestionsFile {
 		}
 
 		if (q.conviction !== undefined && q.recommended === undefined) {
+			if (q.type === "text" || q.type === "image" || q.type === "info") {
+				throw new Error(`Question "${q.id}": conviction not allowed for type "${q.type}" (only single/multi questions take recommended and conviction)`);
+			}
 			throw new Error(`Question "${q.id}": conviction requires recommended`);
 		}
 
 		if (q.recommended !== undefined) {
 			if (q.type === "text" || q.type === "image" || q.type === "info") {
-				throw new Error(`Question "${q.id}": recommended not allowed for type "${q.type}"`);
+				throw new Error(`Question "${q.id}": recommended not allowed for type "${q.type}" (only single/multi questions take recommended and conviction)`);
 			}
 
 			const optionLabels = q.options?.map(getOptionLabel) ?? [];
@@ -436,7 +439,7 @@ export function validateQuestions(data: unknown): QuestionsFile {
 					q.recommended = q.recommended[0];
 				}
 				if (typeof q.recommended !== "string") {
-					throw new Error(`Question "${q.id}": recommended must be string for single-select`);
+					throw new Error(`Question "${q.id}": recommended must be string for single-select: an exact option label, with context and conviction as sibling fields, e.g. {"recommended":"A","context":"Reason"}`);
 				}
 				if (!optionLabels.includes(q.recommended)) {
 					throw new Error(
@@ -448,6 +451,9 @@ export function validateQuestions(data: unknown): QuestionsFile {
 			if (q.type === "multi") {
 				const recs = Array.isArray(q.recommended) ? q.recommended : [q.recommended];
 				for (const rec of recs) {
+					if (typeof rec !== "string") {
+						throw new Error(`Question "${q.id}": recommended must be exact option labels for multi-select, with context and conviction as sibling fields`);
+					}
 					if (!optionLabels.includes(rec)) {
 						throw new Error(`Question "${q.id}": recommended "${rec}" not in options`);
 					}

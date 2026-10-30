@@ -1082,7 +1082,9 @@ export default function (pi: ExtensionAPI) {
 			"Pass questions as inline JSON string directly (preferred) or as a path to a JSON file. " +
 			'Questions JSON format: { "title": "...", "description": "...", "questions": [{ "id": "q1", "type": "single|multi|text|image|info", "question": "...", "options": ["A", "B"], "content": { "source": "...", "lang": "ts" }, "media": { "type": "image|chart|mermaid|table|html", ... } }] }. ' +
 			"Options can be strings or objects: { label: string, content?: { source, lang?, file?, lines?, highlights?, title?, showSource? } }. " +
-			"Always set recommended with context explaining your reasoning. Recommended options show a 'Recommended' badge and are pre-selected for the user. " +
+			"Always set recommended on single/multi questions, with context explaining your reasoning. recommended is an exact option label (single) or an array of labels (multi); context and conviction are sibling question fields, never nested inside recommended. " +
+			'Example: { "questions": [{ "id": "db", "type": "single", "question": "Which database?", "options": ["Postgres", "SQLite"], "recommended": "Postgres", "context": "Handles concurrent writes.", "conviction": "slight" }, { "id": "features", "type": "multi", "question": "Which features?", "options": ["Auth", "API"], "recommended": ["Auth"], "context": "Auth is required." }] }. ' +
+			"Never set recommended or conviction on text, image, or info questions. Recommended options show a 'Recommended' badge and are pre-selected for the user. " +
 			'Use conviction: "slight" when unsure (does NOT pre-select), conviction: "strong" when very confident (shows Recommended badge). ' +
 			"Omit conviction for normal recommendations (pre-selects). " +
 			'Use weight: "critical" for key decisions (visually prominent), weight: "minor" for low-stakes questions (compact card). ' +
@@ -1723,7 +1725,11 @@ export default function (pi: ExtensionAPI) {
 
 		renderResult(result, _options, theme) {
 			const details = result.details as InterviewDetails | undefined;
-			if (!details) return new Text("Interview", 0, 0);
+			// Pi reports thrown tool errors with `details: {}`; show their text instead.
+			if (!details?.status) {
+				const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("\n").trim();
+				return new Text(text || "Interview", 0, 0);
+			}
 
 			if (details.status === "queued" && details.queuedMessage) {
 				const header = theme.fg("warning", "QUEUED");
