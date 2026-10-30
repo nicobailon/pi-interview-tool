@@ -2300,8 +2300,8 @@
 
   function getTabStopsForCard(card) {
     return Array.from(
-      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .file-input .camera-open-btn, .image-path-input, .done-item')
-    );
+      card.querySelectorAll('input[type="radio"], input[type="checkbox"], .option-note-input, .option-ask-btn, .file-dropzone, .file-input .camera-open-btn, .image-path-input, .done-item, .attach-btn')
+    ).filter((element) => !element.disabled && element.offsetParent !== null);
   }
 
   function isPathInput(el) {
@@ -2591,7 +2591,7 @@
   }
 
   function clearOptionHighlight(card) {
-    card.querySelectorAll('.option-row, .option-item, .done-item, .file-dropzone, .image-path-input').forEach(item => {
+    card.querySelectorAll('.option-row, .option-item, .done-item, .file-dropzone, .image-path-input, .attach-btn').forEach(item => {
       item.classList.remove('focused');
     });
   }
@@ -2708,9 +2708,20 @@
     const inOptionNote = document.activeElement?.closest('.option-note-wrap');
 
     if (event.key === 'Tab') {
+      if (event.defaultPrevented) return;
       const inAttachArea = document.activeElement?.closest('.attach-inline');
       const inGenerateArea = document.activeElement?.closest('.generate-more');
       if (inAttachArea || inGenerateArea || inAskArea || inOptionNote) return;
+      if (document.activeElement?.matches('.attach-btn') && !event.shiftKey) {
+        const panel = card.querySelector('.attach-inline:not(.hidden)');
+        if (panel) {
+          event.preventDefault();
+          panel.querySelector('.attach-inline-drop')?.focus();
+          return;
+        }
+      }
+      // Text questions retain native Tab order rather than trapping focus on Attach.
+      if (textarea && options.length === 0) return;
       
       const tabStops = getTabStopsForCard(card);
       if (tabStops.length === 0) {
@@ -2751,6 +2762,10 @@
       return;
     }
     
+    // Let native button activation open/close Attach without selecting an option.
+    if (document.activeElement?.matches('.attach-btn') &&
+        (event.key === 'Enter' || event.key === ' ')) return;
+
     if (options.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -3254,6 +3269,7 @@
       
       const attachFileInput = document.createElement("input");
       attachFileInput.type = "file";
+      attachFileInput.tabIndex = -1;
       attachFileInput.accept = "image/png,image/jpeg,image/gif,image/webp";
       attachFileInput.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;";
       
@@ -3281,6 +3297,14 @@
         const isHidden = attachInline.classList.contains("hidden");
         attachInline.classList.toggle("hidden", !isHidden);
         if (isHidden) attachDrop.focus();
+      });
+      attachInline.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          attachInline.classList.add("hidden");
+          attachBtn.focus();
+        }
       });
       
       attachFileInput.addEventListener("change", () => {
@@ -3310,10 +3334,6 @@
             attachCameraButton.focus();
           }
         }
-        if (e.key === "Escape") {
-          attachBtn.click();
-          attachBtn.focus();
-        }
       });
       setupDropzone(attachDrop, attachFileInput);
       
@@ -3326,15 +3346,11 @@
         if (e.key === "Tab") {
           e.preventDefault();
           if (e.shiftKey) {
-            attachDrop.focus();
+            attachCameraButton.focus();
           } else {
             attachBtn.click();
             attachBtn.focus();
           }
-        }
-        if (e.key === "Escape") {
-          attachBtn.click();
-          attachBtn.focus();
         }
       });
       

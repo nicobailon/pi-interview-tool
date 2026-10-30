@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **+ attach** can now be reached with Tab on choice questions and opened with Enter or Space without selecting an option. Esc closes the attachment area and puts focus back on **+ attach**. Thanks to [@tryingET](https://github.com/tryingET) for #33.
 - Agents now build recommendations in the right shape more often: the tool instructions show that `recommended` is the exact option label (or labels for multi-select), with `context` and `conviction` beside it, and a wrong shape gets an error that says how to fix it. Thanks to [@tryingET](https://github.com/tryingET) for #34.
 
 ## [0.14.0] - 2026-10-23
