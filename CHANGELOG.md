@@ -2,9 +2,11 @@
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-31
+
 ### Fixed
-- **+ attach** can now be reached with Tab on choice questions and opened with Enter or Space without selecting an option. Esc closes the attachment area and puts focus back on **+ attach**. Thanks to [@tryingET](https://github.com/tryingET) for #33.
-- Agents now build recommendations in the right shape more often: the tool instructions show that `recommended` is the exact option label (or labels for multi-select), with `context` and `conviction` beside it, and a wrong shape gets an error that says how to fix it. Thanks to [@tryingET](https://github.com/tryingET) for #34.
+- You can attach an image without a mouse. On choice questions, Tab now reaches **+ attach**, and Enter or Space opens it without selecting an option. Esc closes the attachment area and puts focus back on **+ attach**. Thanks to [@tryingET](https://github.com/tryingET) for #33.
+- Fewer interviews fail because the agent wrote a recommendation in the wrong format. The tool's instructions now show that `recommended` is the exact option label (or a list of labels for multi-select), with `context` and `conviction` as separate fields beside it. If the format is still wrong, the error explains how to fix it. Thanks to [@tryingET](https://github.com/tryingET) for #34.
 
 ## [0.14.0] - 2026-10-23
 
